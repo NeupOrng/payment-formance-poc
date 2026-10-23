@@ -1,0 +1,30 @@
+meta {
+  name: Missing destination is rejected
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "{{serviceCode}}",
+    "amount": "2000",
+    "currency": "USD",
+    "source": "{{payerId}}"
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+}

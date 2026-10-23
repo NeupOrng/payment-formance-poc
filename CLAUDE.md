@@ -1,0 +1,66 @@
+# CLAUDE.md
+
+POC for using **Formance Ledger** as the core ledger of a mobile bank backend. Design docs live in [docs/](docs/README.md); the running code is two NestJS microservices, a Nuxt console and a Docker dev environment.
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `customer/` | NestJS + Drizzle. Customers and their two accounts (USD, KHR). No balances. Port 4001 |
+| `payment/` | NestJS + Drizzle. Service catalog, pricing tiers, balanced debit/credit movements, transfers, outbox, balances; the only code that talks to Formance. Port 4002 |
+| `architecture/` | Local dev environment: `docker-compose.yml`, Postgres init, `scripts/smoke.mjs` |
+| `bruno/` | Bruno API collection: every customer/payment endpoint with tests (`task bruno`) |
+| `docs/` | Proposal, architecture, chart of accounts, flows, schema, plan |
+| `client/` | Nuxt 4 + shadcn-vue + Tailwind v4 console: customers, assets, transaction history. Proxies to the services via `server/api`. Port 4000 (see `client/CLAUDE.md`) |
+| `Taskfile.yml` | All dev commands |
+
+## Commands
+
+```bash
+task dev        # up + seed + smoke test + Bruno collection (the full check)
+task up / down / reset / logs -- payment-service
+task test       # vitest in both services
+task typecheck  # customer, payment and client
+task open       # client in the browser
+task smoke      # end-to-end checks against the running stack
+task bruno      # Bruno collection: every endpoint, with tests
+task db:generate -- payment   # after editing src/db/schema.ts
+```
+
+The stack runs with hot reload. After editing code, `task smoke` is the quickest end-to-end check. After changing a `package.json`, run `task rebuild`.
+
+## Stack conventions
+
+- **NestJS 12 is ESM-only.** Relative imports need the `.js` extension, e.g. `import { X } from './x.js'`.
+- **Drizzle ORM 0.45 with `node-postgres`.** Schema lives in `src/db/schema.ts`; migrations are generated into `drizzle/` and applied on start-up by `DatabaseModule`. Never edit an applied migration; add a new one. Use `drizzle-kit generate --custom` for SQL that Drizzle can't express (see `payment/drizzle/0001_*`).
+- **Each service has its own database and role.** There are no cross-service foreign keys: `transfers.source_account_id` / `destination_account_id` are plain UUIDs.
+- **Services talk over HTTP:** payment calls customer through `CustomerClient`.
+- **Statuses are `text` columns with a `CHECK` constraint.** Lists like `CURRENCIES` and `COMMANDS` are exported `as const` from the schema and reused in DTOs.
+- **Validation:** a global `ValidationPipe` with `whitelist` and `forbidNonWhitelisted`. A route `@Param()` DTO must declare **every** route param, or the request is rejected with a 400.
+- **Tests:** vitest (`*.spec.ts`). Keep money logic in pure functions so it can be unit-tested (`pricing/pricing.ts`, `movement/movement.ts`).
+
+## Domain rules (do not break these)
+
+- **Formance is the only source of truth for money.** Never store a balance in Postgres; balances are read from Formance (`BalancesController`).
+- **Only `payment/src/ledger/` talks to Formance.**
+- **Money is `bigint` end to end,** in the smallest unit (`USD/2`, `KHR/2`). DB columns are `bigint({ mode: 'bigint' })`. The API sends and receives amounts as **strings of digits** (`BigInt.prototype.toJSON` in `main.ts`). Never use JS `number` for money.
+- **Write order:** in one DB transaction, insert the transfer (`pending`), its first event and its outbox row. Then post to Formance with `reference` = `Idempotency-Key` = transfer id. A ledger 400 marks the transfer `failed`; anything else leaves it `pending` for `OutboxWorker`.
+- **Every write endpoint requires an `Idempotency-Key` header,** globally unique (clients send UUIDs).
+- **Never edit or delete ledger transactions.** Corrections are new transactions.
+- **Each customer has exactly two accounts:** `users:{customerId}:usd` and `users:{customerId}:khr`. Both sides of a transfer use the same currency (no FX).
+- **Customer transactions run through a service command** (`payment`, `refund`, `cancel`). The request carries only amount, currency, source (payer) and destination (payee).
+  - Every other amount type (selling price, fees, commissions, VAT, withholding tax, cash back, …) comes from the command's `service_pricing_tiers`.
+  - Who is debited or credited with each type comes from its `service_movement_entries` (debit/credit).
+  - A movement is saved only if Σ debits = Σ credits, and it's checked again before every posting.
+  - To change money movement, change configuration, not code.
+- **Pricing tiers are never updated in place,** because transfers reference them through `transfer_amounts`. Retire a tier with `effectiveTo` and add a new one.
+- **No personal data in ledger addresses or metadata,** only IDs.
+- **Cards are out of scope for now.**
+
+## Docs status
+
+- `docs/05-schema.md` matches the implemented schema.
+- `docs/03-chart-of-accounts.md` and `docs/04-transaction-flows.md` predate the two-account and service model.
+- When the design changes, update the matching file in `docs/` and the rules above in the same change.
+- Docs use Mermaid for diagrams.
+- **When you add or change an endpoint, add or update its request and tests in `bruno/`** (plain `.bru` files; open the folder in the Bruno app or run `task bruno`). The collection runs in order and chains ids through `bru.setVar`, so keep each new request in the right folder and position.

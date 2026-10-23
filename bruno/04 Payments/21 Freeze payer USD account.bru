@@ -1,0 +1,23 @@
+meta {
+  name: Freeze payer USD account
+  type: http
+  seq: 21
+}
+
+patch {
+  url: {{customerUrl}}/accounts/{{payerUsdAccountId}}/status
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "frozen"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

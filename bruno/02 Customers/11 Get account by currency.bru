@@ -1,0 +1,29 @@
+meta {
+  name: Get account by currency
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{customerUrl}}/customers/{{payerId}}/accounts/USD
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("includes customer status", function () {
+    expect(res.body.customerStatus).to.equal("active");
+  });
+
+  test("USD/2 asset", function () {
+    expect(res.body.asset).to.equal("USD/2");
+  });
+}
+
+docs {
+  Used by the payment service to resolve a customer to a ledger account.
+}

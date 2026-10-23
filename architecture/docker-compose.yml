@@ -1,0 +1,107 @@
+name: mobilebank
+
+volumes:
+  postgres-data: {}
+  customer-node-modules: {}
+  payment-node-modules: {}
+  client-node-modules: {}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: ["-c", "max_connections=200"]
+    ports:
+      - "${POSTGRES_PORT:-5440}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ledger:
+    image: ghcr.io/formancehq/ledger:${LEDGER_VERSION:-v2.4.15}
+    command: ["serve"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${LEDGER_PORT:-3068}:3068"
+    environment:
+      POSTGRES_URI: postgresql://ledger:ledger@postgres:5432/ledger?sslmode=disable
+      POSTGRES_MAX_OPEN_CONNS: "40"
+      POSTGRES_MAX_IDLE_CONNS: "40"
+      AUTO_UPGRADE: "true"
+      EXPERIMENTAL_FEATURES: "true"
+      BIND: ":3068"
+    # The image has no HTTP client for a healthcheck; the payment service retries until the ledger answers.
+
+  ledger-worker:
+    image: ghcr.io/formancehq/ledger:${LEDGER_VERSION:-v2.4.15}
+    command: ["worker"]
+    depends_on:
+      ledger:
+        condition: service_started
+    environment:
+      POSTGRES_URI: postgresql://ledger:ledger@postgres:5432/ledger?sslmode=disable
+
+  customer-service:
+    build:
+      context: ../customer
+      target: dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${CUSTOMER_PORT:-4001}:3000"
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://customer_svc:customer_svc@postgres:5432/customer
+    volumes:
+      - ../customer:/app
+      - customer-node-modules:/app/node_modules
+
+  payment-service:
+    build:
+      context: ../payment
+      target: dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ledger:
+        condition: service_started
+      customer-service:
+        condition: service_started
+    ports:
+      - "${PAYMENT_PORT:-4002}:3000"
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://payment_svc:payment_svc@postgres:5432/payment
+      CUSTOMER_SERVICE_URL: http://customer-service:3000
+      LEDGER_URL: http://ledger:3068
+      LEDGER_NAME: mobilebank
+      OUTBOX_INTERVAL_MS: "2000"
+    volumes:
+      - ../payment:/app
+      - payment-node-modules:/app/node_modules
+
+  client:
+    build:
+      context: ../client
+      target: dev
+    depends_on:
+      - customer-service
+      - payment-service
+    ports:
+      - "${CLIENT_PORT:-4000}:3000"
+    environment:
+      NUXT_CUSTOMER_SERVICE_URL: http://customer-service:3000
+      NUXT_PAYMENT_SERVICE_URL: http://payment-service:3000
+    volumes:
+      - ../client:/app
+      - client-node-modules:/app/node_modules

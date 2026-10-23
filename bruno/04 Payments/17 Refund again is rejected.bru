@@ -1,0 +1,25 @@
+meta {
+  name: Refund again is rejected
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{paymentId}}/refund
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("status is 422", function () {
+    expect(res.status).to.equal(422);
+  });
+}

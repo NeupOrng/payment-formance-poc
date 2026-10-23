@@ -1,0 +1,35 @@
+meta {
+  name: Payment replay returns the same transfer
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{payKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "{{serviceCode}}",
+    "amount": "2000",
+    "currency": "USD",
+    "source": "{{payerId}}",
+    "destination": "{{payeeId}}"
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("same id", function () {
+    expect(res.body.id).to.equal(bru.getVar("paymentId"));
+  });
+}

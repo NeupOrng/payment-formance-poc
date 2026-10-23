@@ -1,0 +1,35 @@
+meta {
+  name: Amount above the configured range is rejected
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "{{serviceCode}}",
+    "amount": "5000",
+    "currency": "USD",
+    "source": "{{payerId}}",
+    "destination": "{{payeeId}}"
+  }
+}
+
+tests {
+  test("status is 422", function () {
+    expect(res.status).to.equal(422);
+  });
+
+  test("explains the range", function () {
+    expect(res.body.message).to.contain("outside");
+  });
+}

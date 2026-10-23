@@ -1,0 +1,24 @@
+meta {
+  name: Refund command settings
+  type: http
+  seq: 14
+}
+
+put {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/refund
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "allowPartial": true,
+    "maxAgeMinutes": 60
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

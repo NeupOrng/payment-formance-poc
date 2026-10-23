@@ -1,0 +1,45 @@
+meta {
+  name: Create payer
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{customerUrl}}/customers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "fullName": "Bruno Payer",
+    "phoneNumber": "{{payerPhone}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar("payerPhone", "+855" + Math.floor(100000000 + Math.random() * 900000000));
+}
+
+script:post-response {
+  bru.setVar("payerId", res.body.id);
+  bru.setVar("payerUsdAccountId", res.body.accounts.find((a) => a.currency === "USD").id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("creates USD and KHR accounts", function () {
+    expect(res.body.accounts.map((a) => a.currency).sort()).to.eql(["KHR", "USD"]);
+  });
+
+  test("ledger address per currency", function () {
+    expect(res.body.accounts.find((a) => a.currency === "USD").ledgerAddress).to.equal("users:" + res.body.id + ":usd");
+  });
+}
+
+docs {
+  Creates a customer; the USD and KHR accounts are created in the same database transaction.
+}

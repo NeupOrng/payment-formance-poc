@@ -1,0 +1,27 @@
+meta {
+  name: Update KYC
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{customerUrl}}/customers/{{payerId}}/kyc
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "kycStatus": "verified"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("verified", function () {
+    expect(res.body.kycStatus).to.equal("verified");
+  });
+}

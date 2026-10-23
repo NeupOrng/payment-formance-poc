@@ -1,0 +1,26 @@
+meta {
+  name: List customers
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{customerUrl}}/customers?limit=50&offset=0
+  body: none
+  auth: none
+}
+
+params:query {
+  limit: 50
+  offset: 0
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("contains the payer", function () {
+    expect(res.body.some((c) => c.id === bru.getVar("payerId"))).to.equal(true);
+  });
+}

@@ -1,0 +1,40 @@
+meta {
+  name: Save unbalanced movement is rejected
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/payment/movement
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "entries": [
+      {
+        "entryNo": 1,
+        "side": "debit",
+        "account": "{source}",
+        "amountType": "selling_price"
+      },
+      {
+        "entryNo": 2,
+        "side": "credit",
+        "account": "{destination}",
+        "amountType": "amount"
+      }
+    ]
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+
+  test("explains why", function () {
+    expect(res.body.message).to.contain("not balanced");
+  });
+}

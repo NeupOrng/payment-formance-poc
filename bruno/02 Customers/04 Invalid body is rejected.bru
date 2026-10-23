@@ -1,0 +1,24 @@
+meta {
+  name: Invalid body is rejected
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{customerUrl}}/customers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "fullName": "",
+    "phoneNumber": "not-a-phone"
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+}

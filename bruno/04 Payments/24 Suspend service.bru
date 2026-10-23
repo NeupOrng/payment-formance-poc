@@ -1,0 +1,23 @@
+meta {
+  name: Suspend service
+  type: http
+  seq: 24
+}
+
+patch {
+  url: {{paymentUrl}}/services/{{serviceCode}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "suspended"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

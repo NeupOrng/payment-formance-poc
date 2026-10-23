@@ -1,0 +1,1071 @@
+{
+  "id": "eae5b775-37af-4416-9148-8151563b736e",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.ledger_outbox": {
+      "name": "ledger_outbox",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "transfer_id": {
+          "name": "transfer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request": {
+          "name": "request",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "postings": {
+          "name": "postings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ledger_outbox_due_idx": {
+          "name": "ledger_outbox_due_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ledger_outbox_transfer_id_transfers_id_fk": {
+          "name": "ledger_outbox_transfer_id_transfers_id_fk",
+          "tableFrom": "ledger_outbox",
+          "tableTo": "transfers",
+          "columnsFrom": [
+            "transfer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "ledger_outbox_transfer_id_unique": {
+          "name": "ledger_outbox_transfer_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "transfer_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "ledger_outbox_status_check": {
+          "name": "ledger_outbox_status_check",
+          "value": "\"ledger_outbox\".\"status\" in ('queued', 'done', 'dead')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.service_commands": {
+      "name": "service_commands",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "command": {
+          "name": "command",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "allow_partial": {
+          "name": "allow_partial",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "max_age_minutes": {
+          "name": "max_age_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "net_amount_add": {
+          "name": "net_amount_add",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
+        },
+        "net_amount_subtract": {
+          "name": "net_amount_subtract",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "service_commands_service_id_services_id_fk": {
+          "name": "service_commands_service_id_services_id_fk",
+          "tableFrom": "service_commands",
+          "tableTo": "services",
+          "columnsFrom": [
+            "service_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "service_commands_service_command_unique": {
+          "name": "service_commands_service_command_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "service_id",
+            "command"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "service_commands_command_check": {
+          "name": "service_commands_command_check",
+          "value": "\"service_commands\".\"command\" in ('payment', 'refund', 'cancel')"
+        },
+        "service_commands_status_check": {
+          "name": "service_commands_status_check",
+          "value": "\"service_commands\".\"status\" in ('active', 'disabled')"
+        },
+        "service_commands_net_types_check": {
+          "name": "service_commands_net_types_check",
+          "value": "\"service_commands\".\"net_amount_add\" <@ array['selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge']::text[] and \"service_commands\".\"net_amount_subtract\" <@ array['selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge']::text[]"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.service_movement_entries": {
+      "name": "service_movement_entries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "service_command_id": {
+          "name": "service_command_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_no": {
+          "name": "entry_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "side": {
+          "name": "side",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account": {
+          "name": "account",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_type": {
+          "name": "amount_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "allow_overdraft": {
+          "name": "allow_overdraft",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "service_movement_entries_service_command_id_service_commands_id_fk": {
+          "name": "service_movement_entries_service_command_id_service_commands_id_fk",
+          "tableFrom": "service_movement_entries",
+          "tableTo": "service_commands",
+          "columnsFrom": [
+            "service_command_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "service_movement_entries_command_entry_unique": {
+          "name": "service_movement_entries_command_entry_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "service_command_id",
+            "entry_no"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "service_movement_entries_side_check": {
+          "name": "service_movement_entries_side_check",
+          "value": "\"service_movement_entries\".\"side\" in ('debit', 'credit')"
+        },
+        "service_movement_entries_amount_type_check": {
+          "name": "service_movement_entries_amount_type_check",
+          "value": "\"service_movement_entries\".\"amount_type\" in ('amount', 'selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'net_amount', 'service_charge')"
+        },
+        "service_movement_entries_overdraft_check": {
+          "name": "service_movement_entries_overdraft_check",
+          "value": "not \"service_movement_entries\".\"allow_overdraft\" or \"service_movement_entries\".\"account\" not in ('{source}', '{destination}', '@world')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.service_pricing_tiers": {
+      "name": "service_pricing_tiers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "service_command_id": {
+          "name": "service_command_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_type": {
+          "name": "amount_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_amount": {
+          "name": "min_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
+        "max_amount": {
+          "name": "max_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "calc_type": {
+          "name": "calc_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_amount_type": {
+          "name": "base_amount_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'amount'"
+        },
+        "include_base": {
+          "name": "include_base",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "fixed_amount": {
+          "name": "fixed_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
+        "percent_bps": {
+          "name": "percent_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "min_value": {
+          "name": "min_value",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_value": {
+          "name": "max_value",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "effective_to": {
+          "name": "effective_to",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "service_pricing_tiers_lookup_idx": {
+          "name": "service_pricing_tiers_lookup_idx",
+          "columns": [
+            {
+              "expression": "service_command_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "amount_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "service_pricing_tiers_service_command_id_service_commands_id_fk": {
+          "name": "service_pricing_tiers_service_command_id_service_commands_id_fk",
+          "tableFrom": "service_pricing_tiers",
+          "tableTo": "service_commands",
+          "columnsFrom": [
+            "service_command_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "service_pricing_tiers_amount_type_check": {
+          "name": "service_pricing_tiers_amount_type_check",
+          "value": "\"service_pricing_tiers\".\"amount_type\" in ('selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge')"
+        },
+        "service_pricing_tiers_currency_check": {
+          "name": "service_pricing_tiers_currency_check",
+          "value": "\"service_pricing_tiers\".\"currency\" in ('USD', 'KHR')"
+        },
+        "service_pricing_tiers_calc_type_check": {
+          "name": "service_pricing_tiers_calc_type_check",
+          "value": "\"service_pricing_tiers\".\"calc_type\" in ('fixed', 'percent', 'fixed_plus_percent')"
+        },
+        "service_pricing_tiers_base_check": {
+          "name": "service_pricing_tiers_base_check",
+          "value": "\"service_pricing_tiers\".\"base_amount_type\" in ('amount', 'selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge') and \"service_pricing_tiers\".\"base_amount_type\" <> \"service_pricing_tiers\".\"amount_type\""
+        },
+        "service_pricing_tiers_amounts_check": {
+          "name": "service_pricing_tiers_amounts_check",
+          "value": "\"service_pricing_tiers\".\"min_amount\" >= 0 and (\"service_pricing_tiers\".\"max_amount\" is null or \"service_pricing_tiers\".\"max_amount\" >= \"service_pricing_tiers\".\"min_amount\") and \"service_pricing_tiers\".\"fixed_amount\" >= 0 and \"service_pricing_tiers\".\"percent_bps\" between 0 and 10000"
+        },
+        "service_pricing_tiers_effective_check": {
+          "name": "service_pricing_tiers_effective_check",
+          "value": "\"service_pricing_tiers\".\"effective_to\" is null or \"service_pricing_tiers\".\"effective_to\" > \"service_pricing_tiers\".\"effective_from\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.services": {
+      "name": "services",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "service_code": {
+          "name": "service_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_name": {
+          "name": "service_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "services_service_code_unique": {
+          "name": "services_service_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "service_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "services_status_check": {
+          "name": "services_status_check",
+          "value": "\"services\".\"status\" in ('active', 'suspended', 'inactive')"
+        },
+        "services_code_check": {
+          "name": "services_code_check",
+          "value": "\"services\".\"service_code\" ~ '^[A-Z0-9_]{2,40}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.transfer_amounts": {
+      "name": "transfer_amounts",
+      "schema": "",
+      "columns": {
+        "transfer_id": {
+          "name": "transfer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_type": {
+          "name": "amount_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pricing_tier_id": {
+          "name": "pricing_tier_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "transfer_amounts_transfer_id_transfers_id_fk": {
+          "name": "transfer_amounts_transfer_id_transfers_id_fk",
+          "tableFrom": "transfer_amounts",
+          "tableTo": "transfers",
+          "columnsFrom": [
+            "transfer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "transfer_amounts_pricing_tier_id_service_pricing_tiers_id_fk": {
+          "name": "transfer_amounts_pricing_tier_id_service_pricing_tiers_id_fk",
+          "tableFrom": "transfer_amounts",
+          "tableTo": "service_pricing_tiers",
+          "columnsFrom": [
+            "pricing_tier_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "transfer_amounts_transfer_id_amount_type_pk": {
+          "name": "transfer_amounts_transfer_id_amount_type_pk",
+          "columns": [
+            "transfer_id",
+            "amount_type"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "transfer_amounts_amount_type_check": {
+          "name": "transfer_amounts_amount_type_check",
+          "value": "\"transfer_amounts\".\"amount_type\" in ('amount', 'selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'net_amount', 'service_charge')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.transfer_events": {
+      "name": "transfer_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "transfer_events_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "transfer_id": {
+          "name": "transfer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_status": {
+          "name": "from_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_status": {
+          "name": "to_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "at": {
+          "name": "at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "transfer_events_transfer_idx": {
+          "name": "transfer_events_transfer_idx",
+          "columns": [
+            {
+              "expression": "transfer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "transfer_events_transfer_id_transfers_id_fk": {
+          "name": "transfer_events_transfer_id_transfers_id_fk",
+          "tableFrom": "transfer_events",
+          "tableTo": "transfers",
+          "columnsFrom": [
+            "transfer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.transfers": {
+      "name": "transfers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service_command_id": {
+          "name": "service_command_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "original_transfer_id": {
+          "name": "original_transfer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_customer_id": {
+          "name": "source_customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_account_id": {
+          "name": "source_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination_customer_id": {
+          "name": "destination_customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination_account_id": {
+          "name": "destination_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset": {
+          "name": "asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_net": {
+          "name": "source_net",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination_net": {
+          "name": "destination_net",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ledger_tx_id": {
+          "name": "ledger_tx_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_ref": {
+          "name": "external_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failure_reason": {
+          "name": "failure_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "transfers_source_created_idx": {
+          "name": "transfers_source_created_idx",
+          "columns": [
+            {
+              "expression": "source_customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfers_destination_created_idx": {
+          "name": "transfers_destination_created_idx",
+          "columns": [
+            {
+              "expression": "destination_customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfers_original_idx": {
+          "name": "transfers_original_idx",
+          "columns": [
+            {
+              "expression": "original_transfer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "transfers_service_id_services_id_fk": {
+          "name": "transfers_service_id_services_id_fk",
+          "tableFrom": "transfers",
+          "tableTo": "services",
+          "columnsFrom": [
+            "service_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "transfers_service_command_id_service_commands_id_fk": {
+          "name": "transfers_service_command_id_service_commands_id_fk",
+          "tableFrom": "transfers",
+          "tableTo": "service_commands",
+          "columnsFrom": [
+            "service_command_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "transfers_original_transfer_id_transfers_id_fk": {
+          "name": "transfers_original_transfer_id_transfers_id_fk",
+          "tableFrom": "transfers",
+          "tableTo": "transfers",
+          "columnsFrom": [
+            "original_transfer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "transfers_idempotency_key_unique": {
+          "name": "transfers_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        },
+        "transfers_type_external_ref_unique": {
+          "name": "transfers_type_external_ref_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "type",
+            "external_ref"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "transfers_type_check": {
+          "name": "transfers_type_check",
+          "value": "\"transfers\".\"type\" in ('payment', 'refund', 'cancel', 'topup')"
+        },
+        "transfers_status_check": {
+          "name": "transfers_status_check",
+          "value": "\"transfers\".\"status\" in ('pending', 'posted', 'failed', 'reversed')"
+        },
+        "transfers_currency_check": {
+          "name": "transfers_currency_check",
+          "value": "\"transfers\".\"currency\" in ('USD', 'KHR')"
+        },
+        "transfers_amount_check": {
+          "name": "transfers_amount_check",
+          "value": "\"transfers\".\"amount\" > 0"
+        },
+        "transfers_service_check": {
+          "name": "transfers_service_check",
+          "value": "(\"transfers\".\"type\" = 'topup') = (\"transfers\".\"service_command_id\" is null)"
+        },
+        "transfers_original_check": {
+          "name": "transfers_original_check",
+          "value": "(\"transfers\".\"type\" in ('refund', 'cancel')) = (\"transfers\".\"original_transfer_id\" is not null)"
+        },
+        "transfers_parties_check": {
+          "name": "transfers_parties_check",
+          "value": "(\"transfers\".\"source_customer_id\" is null) = (\"transfers\".\"source_account_id\" is null) and (\"transfers\".\"destination_customer_id\" is null) = (\"transfers\".\"destination_account_id\" is null) and (\"transfers\".\"source_customer_id\" is not null or \"transfers\".\"destination_customer_id\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -1,0 +1,32 @@
+meta {
+  name: Create payee
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{customerUrl}}/customers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "fullName": "Bruno Payee",
+    "phoneNumber": "{{payeePhone}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar("payeePhone", "+855" + Math.floor(100000000 + Math.random() * 900000000));
+}
+
+script:post-response {
+  bru.setVar("payeeId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

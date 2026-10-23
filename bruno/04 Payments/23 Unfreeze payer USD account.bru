@@ -1,0 +1,23 @@
+meta {
+  name: Unfreeze payer USD account
+  type: http
+  seq: 23
+}
+
+patch {
+  url: {{customerUrl}}/accounts/{{payerUsdAccountId}}/status
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "active"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Get service with configuration
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{paymentUrl}}/services/{{serviceCode}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("three commands", function () {
+    expect(res.body.commands.map((c) => c.command).sort()).to.eql(["cancel", "payment", "refund"]);
+  });
+
+  test("payment has its movement", function () {
+    expect(res.body.commands.find((c) => c.command === "payment").movement).to.have.length(3);
+  });
+}

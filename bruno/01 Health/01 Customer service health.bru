@@ -1,0 +1,21 @@
+meta {
+  name: Customer service health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{customerUrl}}/health
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("ok", function () {
+    expect(res.body.status).to.equal("ok");
+  });
+}

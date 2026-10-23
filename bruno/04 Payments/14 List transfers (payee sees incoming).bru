@@ -1,0 +1,25 @@
+meta {
+  name: List transfers (payee sees incoming)
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{paymentUrl}}/transfers?customerId={{payeeId}}
+  body: none
+  auth: none
+}
+
+params:query {
+  customerId: {{payeeId}}
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("includes the payment", function () {
+    expect(res.body.some((t) => t.id === bru.getVar("paymentId"))).to.equal(true);
+  });
+}

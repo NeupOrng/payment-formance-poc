@@ -1,0 +1,48 @@
+meta {
+  name: Check unbalanced movement (dry run)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/payment/movement/check
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "entries": [
+      {
+        "entryNo": 1,
+        "side": "debit",
+        "account": "{source}",
+        "amountType": "selling_price"
+      },
+      {
+        "entryNo": 2,
+        "side": "credit",
+        "account": "{destination}",
+        "amountType": "amount"
+      }
+    ]
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("not balanced", function () {
+    expect(res.body.balanced).to.equal(false);
+  });
+
+  test("reports failing amounts", function () {
+    expect(res.body.problems.length).to.be.greaterThan(0);
+  });
+}
+
+docs {
+  Debit payer selling price, credit payee amount — the fee is not credited anywhere, so debits ≠ credits.
+}

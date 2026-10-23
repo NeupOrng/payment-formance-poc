@@ -1,0 +1,16 @@
+script:pre-request {
+  // A fresh Idempotency-Key for every request ({{idempotencyKey}}); replay tests reuse a saved one.
+  const uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar("idempotencyKey", uuid);
+}
+
+docs {
+  End-to-end tests for the customer and payment services (and the Formance ledger they use).
+  Run the whole collection in order: later requests use ids saved by earlier ones.
+
+  Requires the local stack: `task up` (the seed is not needed; the collection creates its own service).
+  CLI: `task bruno`
+}

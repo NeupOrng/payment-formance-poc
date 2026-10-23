@@ -1,0 +1,21 @@
+meta {
+  name: List customer accounts
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{customerUrl}}/customers/{{payerId}}/accounts
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("two accounts", function () {
+    expect(res.body).to.have.length(2);
+  });
+}

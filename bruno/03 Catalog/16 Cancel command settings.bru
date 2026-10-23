@@ -1,0 +1,23 @@
+meta {
+  name: Cancel command settings
+  type: http
+  seq: 16
+}
+
+put {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/cancel
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "maxAgeMinutes": 60
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

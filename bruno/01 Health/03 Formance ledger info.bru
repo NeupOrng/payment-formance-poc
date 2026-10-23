@@ -1,0 +1,21 @@
+meta {
+  name: Formance ledger info
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{ledgerUrl}}/_info
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("is the ledger", function () {
+    expect(res.body.data.server).to.equal("ledger");
+  });
+}

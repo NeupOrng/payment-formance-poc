@@ -1,0 +1,21 @@
+meta {
+  name: Payee balances
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{paymentUrl}}/customers/{{payeeId}}/balances
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("USD: 2000 \u2212 2000 + 1000 \u2212 1000 = 0", function () {
+    expect(res.body.find((b) => b.currency === "USD").balance).to.equal("0");
+  });
+}

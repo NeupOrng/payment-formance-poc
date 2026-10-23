@@ -1,0 +1,29 @@
+meta {
+  name: Cancel it
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{secondPaymentId}}/cancel
+  body: none
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("posted", function () {
+    expect(res.body.status).to.equal("posted");
+  });
+
+  test("payer gets the amount back", function () {
+    expect(res.body.sourceNet).to.equal("1000");
+  });
+}

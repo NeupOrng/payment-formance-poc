@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Mobile Bank",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

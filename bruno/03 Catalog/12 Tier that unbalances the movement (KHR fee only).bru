@@ -1,0 +1,35 @@
+meta {
+  name: Tier that unbalances the movement (KHR fee only)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/payment/pricing-tiers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "amountType": "fee_from_customer",
+    "currency": "KHR",
+    "minAmount": "1",
+    "calcType": "fixed",
+    "fixedAmount": "1000"
+  }
+}
+
+script:post-response {
+  bru.setVar("khrTierId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("saved, but the response warns", function () {
+    expect(res.body.movementCheck.balanced).to.equal(false);
+  });
+}

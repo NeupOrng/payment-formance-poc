@@ -1,0 +1,27 @@
+meta {
+  name: Missing Idempotency-Key is rejected
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "serviceCode": "{{serviceCode}}",
+    "amount": "2000",
+    "currency": "USD",
+    "source": "{{payerId}}",
+    "destination": "{{payeeId}}"
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+}

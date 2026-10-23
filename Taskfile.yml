@@ -1,0 +1,136 @@
+# Local development tasks. Install Task: https://taskfile.dev (brew install go-task)
+version: '3'
+
+vars:
+  COMPOSE: docker compose -f architecture/docker-compose.yml
+  CUSTOMER_URL: http://localhost:4001
+  PAYMENT_URL: http://localhost:4002
+  CLIENT_URL: http://localhost:4000
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  up:
+    desc: Build and start every service (Postgres, Formance Ledger, customer, payment, client)
+    cmds:
+      - '{{.COMPOSE}} up -d --build'
+      - task: wait
+      - echo "client → {{.CLIENT_URL}}   customer → {{.CUSTOMER_URL}}/docs   payment → {{.PAYMENT_URL}}/docs   ledger → http://localhost:3068"
+
+  down:
+    desc: Stop every service (data is kept)
+    cmds:
+      - '{{.COMPOSE}} down'
+
+  reset:
+    desc: Stop every service and delete all local data (databases, ledger, node_modules volumes)
+    prompt: This deletes all local databases and ledger data. Continue?
+    cmds:
+      - '{{.COMPOSE}} down -v'
+
+  restart:
+    desc: 'Restart one service, e.g. task restart -- payment-service'
+    cmds:
+      - '{{.COMPOSE}} restart {{.CLI_ARGS}}'
+
+  ps:
+    desc: Show service status
+    cmds:
+      - '{{.COMPOSE}} ps'
+
+  logs:
+    desc: 'Follow logs (all services, or e.g. task logs -- payment-service)'
+    cmds:
+      - '{{.COMPOSE}} logs -f --tail 100 {{.CLI_ARGS}}'
+
+  wait:
+    desc: Wait until the customer, payment and client services answer
+    internal: true
+    cmds:
+      - |
+        for url in {{.CUSTOMER_URL}}/health {{.PAYMENT_URL}}/health {{.CLIENT_URL}}; do
+          printf "waiting for $url "
+          for i in $(seq 1 60); do
+            if curl -sf "$url" > /dev/null; then echo ok; break; fi
+            if [ "$i" = 60 ]; then echo "timed out"; exit 1; fi
+            printf "."; sleep 2
+          done
+        done
+
+  seed:
+    desc: Load the example services (EDC_BILL, MOBILE_TOPUP) and their fee tiers
+    dir: payment
+    cmds:
+      - PAYMENT_URL={{.PAYMENT_URL}} npm run seed
+
+  smoke:
+    desc: Run the end-to-end smoke test against the running stack
+    cmds:
+      - CUSTOMER_URL={{.CUSTOMER_URL}} PAYMENT_URL={{.PAYMENT_URL}} node architecture/scripts/smoke.mjs
+
+  bruno:
+    desc: Run the Bruno API collection (bruno/) against the running stack
+    dir: bruno
+    cmds:
+      - npx -y @usebruno/cli@4.2.1 run -r --env local
+
+  dev:
+    desc: Start everything, seed the example services, run the smoke test and the Bruno collection
+    cmds:
+      - task: up
+      - task: seed
+      - task: smoke
+      - task: bruno
+
+  install:
+    desc: Install npm dependencies on the host (for editor support and local tests)
+    cmds:
+      - npm --prefix customer ci
+      - npm --prefix payment ci
+      - npm --prefix client ci
+
+  rebuild:
+    desc: Rebuild service images and refresh their node_modules volumes (after changing package.json)
+    cmds:
+      - '{{.COMPOSE}} rm -sf customer-service payment-service client'
+      - docker volume rm -f mobilebank_customer-node-modules mobilebank_payment-node-modules mobilebank_client-node-modules
+      - '{{.COMPOSE}} up -d --build customer-service payment-service client'
+      - task: wait
+
+  test:
+    desc: Run unit tests for both services
+    cmds:
+      - npm --prefix customer test
+      - npm --prefix payment test
+
+  typecheck:
+    desc: Type-check all three apps
+    cmds:
+      - cd customer && npx tsc --noEmit
+      - cd payment && npx tsc --noEmit
+      - cd client && npx nuxi typecheck
+
+  db:generate:
+    desc: 'Generate a Drizzle migration after editing a schema, e.g. task db:generate -- payment'
+    cmds:
+      - cd {{.CLI_ARGS}} && npx drizzle-kit generate
+
+  db:psql:
+    desc: 'Open psql on a database: customer, payment or ledger (e.g. task db:psql -- payment)'
+    cmds:
+      - '{{.COMPOSE}} exec postgres psql -U postgres -d {{.CLI_ARGS}}'
+    interactive: true
+
+  open:
+    desc: Open the client in the browser
+    cmds:
+      - open {{.CLIENT_URL}}
+
+  ledger:balances:
+    desc: List every ledger account with its balances (straight from Formance)
+    cmds:
+      - curl -s "http://localhost:3068/v2/mobilebank/accounts?expand=volumes&pageSize=100" | python3 -m json.tool
