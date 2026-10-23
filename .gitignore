@@ -1,10 +1,85 @@
+# ---------------------------------------------------------------- Dependencies
 node_modules/
+.pnpm-store/
+.yarn/
+!.yarn/releases
+.npm/
+
+# ---------------------------------------------------------------- Build output
+# NestJS (customer/, payment/)
 dist/
-coverage/
-.env
+build/
 *.tsbuildinfo
-.DS_Store
+
+# Nuxt / Nitro / Vite (client/)
 .nuxt/
 .output/
+.nitro/
 .data/
+.cache/
+.vite/
+.turbo/
+
+# ---------------------------------------------------------------- Tests and coverage
+coverage/
+.nyc_output/
+*.lcov
+test-results/
+junit*.xml
+
+# ---------------------------------------------------------------- Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Bruno: per-user secrets and local environment overrides
+bruno/.env
+bruno/environments/*.local.bru
+
+# ---------------------------------------------------------------- Logs and runtime files
+logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.pid.lock
+*.seed
+
+# ---------------------------------------------------------------- Docker
+# Local overrides of architecture/docker-compose.yml
+docker-compose.override.yml
+architecture/*.override.yml
+
+# ---------------------------------------------------------------- Editors and IDEs
+.idea/
+.fleet/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------- OS
+.DS_Store
+._*
+.AppleDouble
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------------------------------------------------------------- Tooling
+.eslintcache
+.stylelintcache
+.task/
+tmp/
+temp/
