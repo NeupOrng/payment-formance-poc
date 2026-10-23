@@ -14,8 +14,25 @@ tasks:
       - task --list
     silent: true
 
+  env:
+    desc: Create architecture/.env with random local database passwords (once; never committed)
+    status:
+      - test -f architecture/.env
+    cmds:
+      - |
+        set -e
+        while IFS= read -r line; do
+          case "$line" in
+            *=) echo "${line}$(openssl rand -hex 16)" ;;
+            *) echo "$line" ;;
+          esac
+        done < architecture/.env.example > architecture/.env
+        chmod 600 architecture/.env
+        echo "created architecture/.env with random passwords"
+
   up:
     desc: Build and start every service (Postgres, Formance Ledger, customer, payment, client)
+    deps: [env]
     cmds:
       - '{{.COMPOSE}} up -d --build'
       - task: wait
@@ -118,6 +135,19 @@ tasks:
     desc: 'Generate a Drizzle migration after editing a schema, e.g. task db:generate -- payment'
     cmds:
       - cd {{.CLI_ARGS}} && npx drizzle-kit generate
+
+  db:studio:
+    desc: 'Open Drizzle Studio on a service database: customer or payment (e.g. task db:studio -- payment)'
+    dotenv: ['architecture/.env']
+    dir: '{{.CLI_ARGS}}'
+    cmds:
+      - |
+        case "{{.CLI_ARGS}}" in
+          customer) PW="$CUSTOMER_DB_PASSWORD" ;;
+          payment) PW="$PAYMENT_DB_PASSWORD" ;;
+          *) echo "usage: task db:studio -- customer|payment"; exit 1 ;;
+        esac
+        DATABASE_URL="postgresql://{{.CLI_ARGS}}_svc:$PW@localhost:5440/{{.CLI_ARGS}}" npx drizzle-kit studio
 
   db:psql:
     desc: 'Open psql on a database: customer, payment or ledger (e.g. task db:psql -- payment)'

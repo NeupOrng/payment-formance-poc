@@ -75,4 +75,4 @@ Refund or cancel with `POST /payments/:id/refund` and `POST /payments/:id/cancel
 | `task smoke` | 33 end-to-end checks against the running stack, including concurrency and idempotency |
 | `task bruno` | 62 API requests with 120 assertions |
 
-Credentials in this repo (`postgres/postgres`, `payment_svc/payment_svc`, …) are for local development only.
+No credentials are stored in this repository. `task up` generates random local database passwords into `architecture/.env`, which is gitignored (see [architecture/README.md](architecture/README.md#database-credentials)).

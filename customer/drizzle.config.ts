@@ -4,9 +4,6 @@ export default defineConfig({
   dialect: 'postgresql',
   schema: './src/db/schema.ts',
   out: './drizzle',
-  dbCredentials: {
-    url:
-      process.env.DATABASE_URL ??
-      'postgresql://customer_svc:customer_svc@localhost:5440/customer',
-  },
+  // Only needed for `drizzle-kit studio` / `push`; `task db:studio -- customer` builds it from architecture/.env.
+  dbCredentials: { url: process.env.DATABASE_URL ?? '' },
 });

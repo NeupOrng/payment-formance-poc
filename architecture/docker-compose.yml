@@ -11,13 +11,17 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run `task env` to create architecture/.env}
+      # Passed to postgres/init.sh, which creates one role + database per service on first start.
+      LEDGER_DB_PASSWORD: ${LEDGER_DB_PASSWORD:?run `task env`}
+      CUSTOMER_DB_PASSWORD: ${CUSTOMER_DB_PASSWORD:?run `task env`}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?run `task env`}
     command: ["-c", "max_connections=200"]
     ports:
       - "${POSTGRES_PORT:-5440}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -33,7 +37,7 @@ services:
     ports:
       - "${LEDGER_PORT:-3068}:3068"
     environment:
-      POSTGRES_URI: postgresql://ledger:ledger@postgres:5432/ledger?sslmode=disable
+      POSTGRES_URI: postgresql://ledger:${LEDGER_DB_PASSWORD}@postgres:5432/ledger?sslmode=disable
       POSTGRES_MAX_OPEN_CONNS: "40"
       POSTGRES_MAX_IDLE_CONNS: "40"
       AUTO_UPGRADE: "true"
@@ -48,7 +52,7 @@ services:
       ledger:
         condition: service_started
     environment:
-      POSTGRES_URI: postgresql://ledger:ledger@postgres:5432/ledger?sslmode=disable
+      POSTGRES_URI: postgresql://ledger:${LEDGER_DB_PASSWORD}@postgres:5432/ledger?sslmode=disable
 
   customer-service:
     build:
@@ -61,7 +65,7 @@ services:
       - "${CUSTOMER_PORT:-4001}:3000"
     environment:
       PORT: "3000"
-      DATABASE_URL: postgresql://customer_svc:customer_svc@postgres:5432/customer
+      DATABASE_URL: postgresql://customer_svc:${CUSTOMER_DB_PASSWORD}@postgres:5432/customer
     volumes:
       - ../customer:/app
       - customer-node-modules:/app/node_modules
@@ -81,7 +85,7 @@ services:
       - "${PAYMENT_PORT:-4002}:3000"
     environment:
       PORT: "3000"
-      DATABASE_URL: postgresql://payment_svc:payment_svc@postgres:5432/payment
+      DATABASE_URL: postgresql://payment_svc:${PAYMENT_DB_PASSWORD}@postgres:5432/payment
       CUSTOMER_SERVICE_URL: http://customer-service:3000
       LEDGER_URL: http://ledger:3068
       LEDGER_NAME: mobilebank

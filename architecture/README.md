@@ -41,14 +41,26 @@ flowchart LR
 
 `customer/`, `payment/` and `client/` are bind-mounted into their containers. The services run `nest start --watch` and the client runs `nuxt dev`, so saving a file reloads it. `node_modules` live in Docker volumes, separate from the host. After changing a `package.json`, run `task rebuild`.
 
-## Database credentials (local only)
+## Database credentials
 
-| Database | User / password | URL from the host |
+No passwords are stored in this repository:
+- `task env` (which `task up` runs automatically) creates `architecture/.env` from `.env.example`, with a random password for each value.
+- That file is gitignored and readable only by you (`chmod 600`).
+- `docker-compose.yml` refuses to start without it.
+- `postgres/init.sh` creates the service roles from those values the first time the Postgres volume is created.
+
+| Database | User | Password variable in `architecture/.env` |
 | --- | --- | --- |
-| customer | `customer_svc` / `customer_svc` | `postgresql://customer_svc:customer_svc@localhost:5440/customer` |
-| payment | `payment_svc` / `payment_svc` | `postgresql://payment_svc:payment_svc@localhost:5440/payment` |
-| ledger | `ledger` / `ledger` | `postgresql://ledger:ledger@localhost:5440/ledger` |
-| (superuser) | `postgres` / `postgres` | `task db:psql -- payment` |
+| customer | `customer_svc` | `CUSTOMER_DB_PASSWORD` |
+| payment | `payment_svc` | `PAYMENT_DB_PASSWORD` |
+| ledger | `ledger` | `LEDGER_DB_PASSWORD` |
+| (superuser) | `postgres` | `POSTGRES_PASSWORD` |
+
+Connection URLs from the host look like `postgresql://payment_svc:<PAYMENT_DB_PASSWORD>@localhost:5440/payment`. Shortcuts:
+- `task db:psql -- payment` opens a SQL shell.
+- `task db:studio -- payment` opens Drizzle Studio.
+
+**Changing a password:** after you edit `.env`, run `task reset` to recreate the volume, because the roles are only created once.
 
 ## Walkthrough
 
