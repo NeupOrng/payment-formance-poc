@@ -3,7 +3,7 @@
 Everything runs in Docker. Start it from the repository root with [Task](https://taskfile.dev) (`brew install go-task`):
 
 ```bash
-task dev      # build + start everything, seed example services, run the smoke test
+task dev      # build + start everything, seed the example configuration, run the smoke test and Bruno
 task up       # build + start everything
 task down     # stop (data kept)
 task reset    # stop and delete all local data
@@ -15,31 +15,36 @@ Run `task` to list every command.
 
 | Container | Host port | What it is |
 | --- | --- | --- |
-| `postgres` | 5440 | Postgres 16. Three databases, one role each: `customer`, `payment`, `ledger` (see `postgres/init.sql`) |
-| `ledger` | 3068 | Formance Ledger v2.4.15 API (`serve`) |
+| `postgres` | 5440 | Postgres 16: databases `profile`, `payment`, `ledger`, one role each (see `postgres/init.sh`) |
+| `ledger` | 3068 | Formance Ledger v2.4.15 API; publishes every transaction to the Profile Service (`/ledger-events`) |
 | `ledger-worker` | – | Formance Ledger background worker |
-| `customer-service` | 4001 | NestJS: customers and their USD / KHR accounts. Swagger at `/docs` |
-| `payment-service` | 4002 | NestJS: services, commands, pricing tiers, balance movements, transfers, balances. Swagger at `/docs` |
-| `client` | 4000 | Nuxt 4 console: customers, USD/KHR assets, transaction history, ledger postings |
+| `temporal` | 7233, UI **8233** | Temporal dev server (SQLite in a volume) with its web UI — every order's saga |
+| `partner-mock` | 4003 | Mock biller used as an external SPI (`/validations`, `/confirmations`, failure switch) |
+| `profile-service` | 4001 | NestJS: profiles, account products, stocks (balances mirrored from Formance). Swagger at `/docs` |
+| `payment-service` | 4002 | NestJS: service configuration and payment orders (Temporal worker inside). Swagger at `/docs` |
+| `client` | 4000 | Nuxt 4 console |
 
 ```mermaid
 flowchart LR
-    UI[client :4000] -- "/api proxy" --> C
-    UI -- "/api proxy" --> P
-    C[customer-service :4001] --> PG[(postgres :5440)]
-    P[payment-service :4002] --> PG
-    P -- "accounts by customer + currency" --> C
-    P -- "Numscript, Idempotency-Key" --> L[Formance ledger :3068]
+    UI[client :4000] -- "/api proxy" --> PR[profile-service :4001]
+    UI -- "/api proxy" --> PE[payment-service :4002]
+    PE -- "stocks" --> PR
+    PE -- "start / signal / query" --> T[temporal :7233]
+    T -- "activities" --> PE
+    PE -- "Numscript, reference = order:step" --> L[Formance ledger :3068]
+    PE -- "SPI calls" --> PM[partner-mock :4003]
+    L -- "ledger events" --> PR
+    PR -. "read balances" .-> L
+    PR --> PG[(postgres :5440)]
+    PE --> PG
     L --> PG
-    W[ledger-worker] --> PG
 ```
 
-- Each service runs its Drizzle migrations on start-up.
-- The payment service creates the `mobilebank` ledger in Formance if it doesn't exist yet.
+Each service runs its Drizzle migrations on start-up. The payment engine creates the `mobilebank` ledger in Formance if it doesn't exist.
 
 ## Hot reload
 
-`customer/`, `payment/` and `client/` are bind-mounted into their containers. The services run `nest start --watch` and the client runs `nuxt dev`, so saving a file reloads it. `node_modules` live in Docker volumes, separate from the host. After changing a `package.json`, run `task rebuild`.
+`profile/`, `payment/`, `client/` and `partner-mock/server.mjs` are bind-mounted, and saving a file reloads it. `node_modules` live in Docker volumes; after changing a `package.json`, run `task rebuild`. If a service ever misses a change, `task restart -- payment-service`.
 
 ## Database credentials
 
@@ -47,61 +52,54 @@ No passwords are stored in this repository:
 - `task env` (which `task up` runs automatically) creates `architecture/.env` from `.env.example`, with a random password for each value.
 - That file is gitignored and readable only by you (`chmod 600`).
 - `docker-compose.yml` refuses to start without it.
-- `postgres/init.sh` creates the service roles from those values the first time the Postgres volume is created.
+- `postgres/init.sh` creates the service roles from those values when the Postgres volume is first created.
 
 | Database | User | Password variable in `architecture/.env` |
 | --- | --- | --- |
-| customer | `customer_svc` | `CUSTOMER_DB_PASSWORD` |
+| profile | `profile_svc` | `PROFILE_DB_PASSWORD` |
 | payment | `payment_svc` | `PAYMENT_DB_PASSWORD` |
 | ledger | `ledger` | `LEDGER_DB_PASSWORD` |
 | (superuser) | `postgres` | `POSTGRES_PASSWORD` |
 
-Connection URLs from the host look like `postgresql://payment_svc:<PAYMENT_DB_PASSWORD>@localhost:5440/payment`. Shortcuts:
+**Shortcuts:**
 - `task db:psql -- payment` opens a SQL shell.
 - `task db:studio -- payment` opens Drizzle Studio.
 
-**Changing a password:** after you edit `.env`, run `task reset` to recreate the volume, because the roles are only created once.
+**Changing a password:** after you edit `.env`, run `task reset`, because the roles are only created once.
 
 ## Walkthrough
 
+After `task up && task seed`. Use the stock ids from the console or `GET /profiles/:id`.
+
 ```bash
-# 1. Create a customer (USD + KHR accounts are created with it)
-curl -s -X POST localhost:4001/customers -H 'content-type: application/json' \
-  -d '{"fullName":"Sok Dara","phoneNumber":"+85512345678"}'
+# 1. A customer: INDIVIDUAL with KYC → ACTIVE, CURRENT account with USD + KHR stocks
+curl -s -X POST localhost:4001/profiles -H 'content-type: application/json' \
+  -d '{"profileType":"INDIVIDUAL","fullName":"Sok Dara","phoneNumber":"+85512345678","kycVerified":true}'
 
-# 2. Top up $200.00 (amounts are strings in the smallest unit: 20000 = $200.00)
-curl -s -X POST localhost:4002/topups -H 'content-type: application/json' -H 'Idempotency-Key: topup-1' \
-  -d '{"customerId":"<id>","currency":"USD","amount":"20000","externalRef":"bank-ref-1"}'
+# 2. Cash-in $100 from the bank's Settlement stock (bank payer: no authorization)
+curl -s -X POST localhost:4002/payments -H 'content-type: application/json' -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"serviceCode":"CASH_IN_USD","amount":"100.00","payerStockId":"<bank settlement USD stock>","payeeStockId":"<Dara USD stock>"}'
 
-# 3. Pay an electricity bill of $100.00: the payer is debited the selling price ($100.25 = amount + fee)
-curl -s -X POST localhost:4002/payments -H 'content-type: application/json' -H 'Idempotency-Key: pay-1' \
-  -d '{"serviceCode":"EDC_BILL","amount":"10000","currency":"USD","source":"<id>"}'
+# 3. Merchant QR payment of $20: priced by the tier (fee 5%), $21.00 held → PENDING
+curl -s -X POST localhost:4002/payments -H 'content-type: application/json' -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"serviceCode":"MERCHANT_QR_USD","amount":"20.00","payerStockId":"<Dara USD stock>","payeeStockId":"<merchant USD stock>"}'
 
-# 4. Pay a merchant by QR (needs a payee): payer −$21.00, merchant +$20.00, fee account +$1.00
-curl -s -X POST localhost:4002/payments -H 'content-type: application/json' -H 'Idempotency-Key: qr-1' \
-  -d '{"serviceCode":"MERCHANT_QR","amount":"2000","currency":"USD","source":"<payer id>","destination":"<merchant id>"}'
+# 4. Authorize → PROCESSING → COMPLETED
+curl -s -X POST localhost:4002/payments/<order id>/authorize -H 'content-type: application/json' -d '{}'
 
-# 5. Refund part of the bill, or cancel it (service, currency and customers come from the payment)
-curl -s -X POST localhost:4002/payments/<payment id>/refund -H 'content-type: application/json' -H 'Idempotency-Key: ref-1' \
-  -d '{"amount":"4000"}'
-curl -s -X POST localhost:4002/payments/<payment id>/cancel -H 'Idempotency-Key: cancel-1'
-
-# 6. Balances (read live from Formance)
-curl -s localhost:4002/customers/<id>/balances
-curl -s localhost:4002/services/EDC_BILL/balances
+# 5. Bill payment with the biller as an SPI; externalReference REJECT-… makes the biller refuse after
+#    the money moved → movements reverted, hold released, FAILED
+curl -s -X POST localhost:4002/payments -H 'content-type: application/json' -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"serviceCode":"EDC_BILL_USD","amount":"10.00","payerStockId":"<Dara USD stock>","payeeStockId":"<bank EDC payable USD stock>","externalReference":"REJECT-1"}'
 ```
 
-**Bruno:** open the `bruno/` folder in the Bruno app and pick the `local` environment, or run `task bruno`. It's a 62-request collection covering every endpoint, with tests. It creates its own customers and service, so it can run any number of times and doesn't need the seed.
+Open http://localhost:8233 to watch each saga step by step.
 
-Every write needs an `Idempotency-Key` header. Sending the same key again returns the original transfer instead of creating a new one.
-
-A transfer response has `status`:
-- `posted`: the ledger accepted it.
-- `failed`: the ledger rejected it, e.g. `failureReason: "insufficient_fund"`. No money moved.
-- `pending`: the ledger wasn't reachable. The outbox worker retries it in the background.
+**Bruno:** open `bruno/` in the Bruno app with the `local` environment, or run `task bruno`. It covers every endpoint (81 requests), creates its own bank, customers, SPI and services, and needs no seed.
 
 ## Troubleshooting
 
-- **Postgres logs "No space left on device" or "could not write init file":** Docker Desktop's disk is full. Run `docker builder prune` or raise the disk limit in Docker Desktop.
+- **Postgres logs "No space left on device":** Docker Desktop's disk is full. Run `docker builder prune` or raise the disk limit.
 - **The service won't start after you add a dependency:** run `task rebuild`.
-- **You want a clean slate:** run `task reset`, then `task dev`.
+- **A saga looks stuck:** open it in the Temporal UI (http://localhost:8233). Activities retry with backoff, and the failing step and its error are shown there.
+- **You want a clean slate:** `task reset`, then `task dev`.

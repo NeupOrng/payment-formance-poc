@@ -1,0 +1,21 @@
+meta {
+  name: Refresh payer stock mirror
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{profileUrl}}/stocks/{{payerStock}}/refresh
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("mirror matches Formance", function () {
+    expect(res.body.ledgerBalance).to.equal("98.50"); expect(res.body.availableBalance).to.equal("98.50");
+  });
+}

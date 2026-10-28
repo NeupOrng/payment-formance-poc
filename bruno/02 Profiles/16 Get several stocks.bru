@@ -1,0 +1,25 @@
+meta {
+  name: Get several stocks
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{profileUrl}}/stocks?ids={{payerStock}},{{payeeStock}}
+  body: none
+  auth: none
+}
+
+params:query {
+  ids: {{payerStock}},{{payeeStock}}
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("two stocks", function () {
+    expect(res.body).to.have.length(2);
+  });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Preview the tier at $40
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{paymentUrl}}/tiers/{{tierId}}/preview
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "amount": "40.00"
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("fee 2.00, selling price 42.00", function () {
+    expect(res.body.amounts.FEE_FROM_CUSTOMER).to.equal("2.00"); expect(res.body.amounts.SELLING_PRICE).to.equal("42.00");
+  });
+}

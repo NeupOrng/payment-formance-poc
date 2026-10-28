@@ -1,0 +1,23 @@
+meta {
+  name: ACTIVE without KYC is rejected
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{profileUrl}}/profiles/{{noKycId}}/status
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "ACTIVE"
+  }
+}
+
+tests {
+  test("status is 422", function () {
+    expect(res.status).to.equal(422);
+  });
+}

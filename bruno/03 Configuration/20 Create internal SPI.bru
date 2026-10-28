@@ -1,0 +1,37 @@
+meta {
+  name: Create internal SPI
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{paymentUrl}}/spis
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "{{spiCode}}",
+    "name": "Bruno notification",
+    "spiType": "INTERNAL",
+    "internal": {
+      "handlerName": "push-notification",
+      "timeoutMs": 2000
+    }
+  }
+}
+
+script:pre-request {
+  bru.setVar("spiCode", "BRUNO_SPI_" + Math.floor(100000 + Math.random() * 900000));
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("internal config", function () {
+    expect(res.body.internal.handlerName).to.equal("push-notification");
+  });
+}

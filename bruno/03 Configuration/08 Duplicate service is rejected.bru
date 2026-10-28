@@ -1,0 +1,26 @@
+meta {
+  name: Duplicate service is rejected
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{paymentUrl}}/services
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "serviceGroupId": "{{groupId}}",
+    "code": "{{serviceCode}}",
+    "name": "Again",
+    "currency": "USD"
+  }
+}
+
+tests {
+  test("status is 409", function () {
+    expect(res.status).to.equal(409);
+  });
+}

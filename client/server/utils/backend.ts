@@ -1,6 +1,6 @@
 import { ofetch } from 'ofetch'
 
-type Backend = 'customer' | 'payment'
+type Backend = 'profile' | 'payment'
 type FetchFailure = {
   statusCode?: number
   statusMessage?: string
@@ -14,7 +14,7 @@ export async function backend<T>(
   query?: Record<string, unknown>,
 ): Promise<T> {
   const config = useRuntimeConfig()
-  const baseURL = service === 'customer' ? config.customerServiceUrl : config.paymentServiceUrl
+  const baseURL = service === 'profile' ? config.profileServiceUrl : config.paymentServiceUrl
   try {
     return await ofetch<T>(path, { baseURL, query, timeout: 10_000 })
   } catch (err) {

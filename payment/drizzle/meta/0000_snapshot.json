@@ -1,11 +1,41 @@
 {
-  "id": "eae5b775-37af-4416-9148-8151563b736e",
+  "id": "74fc6c26-67e3-4d06-98fa-209a5b3eed00",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.ledger_outbox": {
-      "name": "ledger_outbox",
+    "public.amount_type": {
+      "name": "amount_type",
+      "schema": "",
+      "columns": {
+        "code": {
+          "name": "code",
+          "type": "varchar(30)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_amount_type_code": {
+          "name": "chk_amount_type_code",
+          "value": "\"amount_type\".\"code\" ~ '^[A-Z][A-Z0-9_]*$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.balance_movement_config": {
+      "name": "balance_movement_config",
       "schema": "",
       "columns": {
         "id": {
@@ -15,48 +45,230 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "transfer_id": {
-          "name": "transfer_id",
+        "tier_config_id": {
+          "name": "tier_config_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "request": {
-          "name": "request",
-          "type": "jsonb",
+        "movement_sequence": {
+          "name": "movement_sequence",
+          "type": "smallint",
           "primaryKey": false,
           "notNull": true
         },
-        "postings": {
-          "name": "postings",
-          "type": "jsonb",
+        "amount_type": {
+          "name": "amount_type",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_stock_role": {
+          "name": "from_stock_role",
+          "type": "stock_role",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_stock_id": {
+          "name": "from_stock_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_stock_role": {
+          "name": "to_stock_role",
+          "type": "stock_role",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_stock_id": {
+          "name": "to_stock_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "balance_movement_config_tier_config_id_tier_config_id_fk": {
+          "name": "balance_movement_config_tier_config_id_tier_config_id_fk",
+          "tableFrom": "balance_movement_config",
+          "tableTo": "tier_config",
+          "columnsFrom": [
+            "tier_config_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "balance_movement_config_amount_type_amount_type_code_fk": {
+          "name": "balance_movement_config_amount_type_amount_type_code_fk",
+          "tableFrom": "balance_movement_config",
+          "tableTo": "amount_type",
+          "columnsFrom": [
+            "amount_type"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_movement_sequence": {
+          "name": "uq_movement_sequence",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tier_config_id",
+            "movement_sequence"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "chk_from_stock": {
+          "name": "chk_from_stock",
+          "value": "(\"balance_movement_config\".\"from_stock_role\" = 'SPECIFIC') = (\"balance_movement_config\".\"from_stock_id\" IS NOT NULL)"
+        },
+        "chk_to_stock": {
+          "name": "chk_to_stock",
+          "value": "(\"balance_movement_config\".\"to_stock_role\" = 'SPECIFIC') = (\"balance_movement_config\".\"to_stock_id\" IS NOT NULL)"
+        },
+        "chk_not_same_stock": {
+          "name": "chk_not_same_stock",
+          "value": "NOT (\"balance_movement_config\".\"from_stock_role\" = \"balance_movement_config\".\"to_stock_role\" AND \"balance_movement_config\".\"from_stock_role\" <> 'SPECIFIC')\n        AND (\"balance_movement_config\".\"from_stock_id\" IS NULL OR \"balance_movement_config\".\"to_stock_id\" IS NULL OR \"balance_movement_config\".\"from_stock_id\" <> \"balance_movement_config\".\"to_stock_id\")"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.payment_order_amount": {
+      "name": "payment_order_amount",
+      "schema": "",
+      "columns": {
+        "payment_order_id": {
+          "name": "payment_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_type": {
+          "name": "amount_type",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(20, 2)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "payment_order_amount_payment_order_id_payment_orders_id_fk": {
+          "name": "payment_order_amount_payment_order_id_payment_orders_id_fk",
+          "tableFrom": "payment_order_amount",
+          "tableTo": "payment_orders",
+          "columnsFrom": [
+            "payment_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "payment_order_amount_amount_type_amount_type_code_fk": {
+          "name": "payment_order_amount_amount_type_amount_type_code_fk",
+          "tableFrom": "payment_order_amount",
+          "tableTo": "amount_type",
+          "columnsFrom": [
+            "amount_type"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "payment_order_amount_payment_order_id_amount_type_pk": {
+          "name": "payment_order_amount_payment_order_id_amount_type_pk",
+          "columns": [
+            "payment_order_id",
+            "amount_type"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_order_amount_non_negative": {
+          "name": "chk_order_amount_non_negative",
+          "value": "\"payment_order_amount\".\"amount\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.payment_order_balance_movement": {
+      "name": "payment_order_balance_movement",
+      "schema": "",
+      "columns": {
+        "payment_order_id": {
+          "name": "payment_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "movement_sequence": {
+          "name": "movement_sequence",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_type": {
+          "name": "amount_type",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(20, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_stock_id": {
+          "name": "from_stock_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_stock_id": {
+          "name": "to_stock_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "movement_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'queued'"
+          "default": "'PENDING'"
         },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "next_attempt_at": {
-          "name": "next_attempt_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
+        "core_reference": {
+          "name": "core_reference",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": false
         },
@@ -76,17 +288,230 @@
         }
       },
       "indexes": {
-        "ledger_outbox_due_idx": {
-          "name": "ledger_outbox_due_idx",
+        "idx_pobm_pending": {
+          "name": "idx_pobm_pending",
           "columns": [
             {
-              "expression": "status",
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"payment_order_balance_movement\".\"status\" = 'PENDING'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "payment_order_balance_movement_payment_order_id_payment_orders_id_fk": {
+          "name": "payment_order_balance_movement_payment_order_id_payment_orders_id_fk",
+          "tableFrom": "payment_order_balance_movement",
+          "tableTo": "payment_orders",
+          "columnsFrom": [
+            "payment_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "payment_order_balance_movement_amount_type_amount_type_code_fk": {
+          "name": "payment_order_balance_movement_amount_type_amount_type_code_fk",
+          "tableFrom": "payment_order_balance_movement",
+          "tableTo": "amount_type",
+          "columnsFrom": [
+            "amount_type"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "payment_order_balance_movement_payment_order_id_movement_sequence_pk": {
+          "name": "payment_order_balance_movement_payment_order_id_movement_sequence_pk",
+          "columns": [
+            "payment_order_id",
+            "movement_sequence"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_movement_amount": {
+          "name": "chk_movement_amount",
+          "value": "\"payment_order_balance_movement\".\"amount\" > 0"
+        },
+        "chk_movement_stocks": {
+          "name": "chk_movement_stocks",
+          "value": "\"payment_order_balance_movement\".\"from_stock_id\" <> \"payment_order_balance_movement\".\"to_stock_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.payment_order_ledger_tx": {
+      "name": "payment_order_ledger_tx",
+      "schema": "",
+      "columns": {
+        "payment_order_id": {
+          "name": "payment_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "step": {
+          "name": "step",
+          "type": "ledger_step",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "postings": {
+          "name": "postings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "numscript": {
+          "name": "numscript",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "ledger_tx_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PLANNED'"
+        },
+        "ledger_tx_id": {
+          "name": "ledger_tx_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failure_reason": {
+          "name": "failure_reason",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "payment_order_ledger_tx_payment_order_id_payment_orders_id_fk": {
+          "name": "payment_order_ledger_tx_payment_order_id_payment_orders_id_fk",
+          "tableFrom": "payment_order_ledger_tx",
+          "tableTo": "payment_orders",
+          "columnsFrom": [
+            "payment_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "payment_order_ledger_tx_payment_order_id_step_pk": {
+          "name": "payment_order_ledger_tx_payment_order_id_step_pk",
+          "columns": [
+            "payment_order_id",
+            "step"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.payment_order_status_history": {
+      "name": "payment_order_status_history",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "payment_order_id": {
+          "name": "payment_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_status": {
+          "name": "from_status",
+          "type": "payment_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_status": {
+          "name": "to_status",
+          "type": "payment_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason_code": {
+          "name": "reason_code",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "changed_by": {
+          "name": "changed_by",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_posh_order": {
+          "name": "idx_posh_order",
+          "columns": [
+            {
+              "expression": "payment_order_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "next_attempt_at",
+              "expression": "changed_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -99,12 +524,441 @@
         }
       },
       "foreignKeys": {
-        "ledger_outbox_transfer_id_transfers_id_fk": {
-          "name": "ledger_outbox_transfer_id_transfers_id_fk",
-          "tableFrom": "ledger_outbox",
-          "tableTo": "transfers",
+        "payment_order_status_history_payment_order_id_payment_orders_id_fk": {
+          "name": "payment_order_status_history_payment_order_id_payment_orders_id_fk",
+          "tableFrom": "payment_order_status_history",
+          "tableTo": "payment_orders",
           "columnsFrom": [
-            "transfer_id"
+            "payment_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.payment_orders": {
+      "name": "payment_orders",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "order_reference": {
+          "name": "order_reference",
+          "type": "varchar(35)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_reference": {
+          "name": "external_reference",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_command_id": {
+          "name": "service_command_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tier_config_id": {
+          "name": "tier_config_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "original_order_id": {
+          "name": "original_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "payment_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PENDING'"
+        },
+        "status_reason_code": {
+          "name": "status_reason_code",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payer_account_id": {
+          "name": "payer_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payer_name": {
+          "name": "payer_name",
+          "type": "varchar(140)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payee_account_id": {
+          "name": "payee_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payee_name": {
+          "name": "payee_name",
+          "type": "varchar(140)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(20, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "char(3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "idx_po_customer_created": {
+          "name": "idx_po_customer_created",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_po_payer_created": {
+          "name": "idx_po_payer_created",
+          "columns": [
+            {
+              "expression": "payer_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_po_payee_created": {
+          "name": "idx_po_payee_created",
+          "columns": [
+            {
+              "expression": "payee_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_po_in_flight": {
+          "name": "idx_po_in_flight",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"payment_orders\".\"status\" IN ('PENDING', 'PROCESSING')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_po_external_reference": {
+          "name": "idx_po_external_reference",
+          "columns": [
+            {
+              "expression": "external_reference",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_po_original_order": {
+          "name": "idx_po_original_order",
+          "columns": [
+            {
+              "expression": "original_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"payment_orders\".\"original_order_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "payment_orders_service_id_service_id_fk": {
+          "name": "payment_orders_service_id_service_id_fk",
+          "tableFrom": "payment_orders",
+          "tableTo": "service",
+          "columnsFrom": [
+            "service_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "payment_orders_service_command_id_service_command_id_fk": {
+          "name": "payment_orders_service_command_id_service_command_id_fk",
+          "tableFrom": "payment_orders",
+          "tableTo": "service_command",
+          "columnsFrom": [
+            "service_command_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "payment_orders_tier_config_id_tier_config_id_fk": {
+          "name": "payment_orders_tier_config_id_tier_config_id_fk",
+          "tableFrom": "payment_orders",
+          "tableTo": "tier_config",
+          "columnsFrom": [
+            "tier_config_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "payment_orders_original_order_id_payment_orders_id_fk": {
+          "name": "payment_orders_original_order_id_payment_orders_id_fk",
+          "tableFrom": "payment_orders",
+          "tableTo": "payment_orders",
+          "columnsFrom": [
+            "original_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fk_po_service_currency": {
+          "name": "fk_po_service_currency",
+          "tableFrom": "payment_orders",
+          "tableTo": "service",
+          "columnsFrom": [
+            "service_id",
+            "currency"
+          ],
+          "columnsTo": [
+            "id",
+            "currency"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "payment_orders_order_reference_unique": {
+          "name": "payment_orders_order_reference_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "order_reference"
+          ]
+        },
+        "uq_idempotency": {
+          "name": "uq_idempotency",
+          "nullsNotDistinct": false,
+          "columns": [
+            "customer_id",
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "chk_not_self_reference": {
+          "name": "chk_not_self_reference",
+          "value": "\"payment_orders\".\"original_order_id\" <> \"payment_orders\".\"id\""
+        },
+        "chk_order_amount": {
+          "name": "chk_order_amount",
+          "value": "\"payment_orders\".\"amount\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.service": {
+      "name": "service",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "service_group_id": {
+          "name": "service_group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(140)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "char(3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "config_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ACTIVE'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "service_service_group_id_service_group_id_fk": {
+          "name": "service_service_group_id_service_group_id_fk",
+          "tableFrom": "service",
+          "tableTo": "service_group",
+          "columnsFrom": [
+            "service_group_id"
           ],
           "columnsTo": [
             "id"
@@ -115,25 +969,28 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "ledger_outbox_transfer_id_unique": {
-          "name": "ledger_outbox_transfer_id_unique",
+        "service_code_unique": {
+          "name": "service_code_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "transfer_id"
+            "code"
+          ]
+        },
+        "uq_service_currency": {
+          "name": "uq_service_currency",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "currency"
           ]
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "ledger_outbox_status_check": {
-          "name": "ledger_outbox_status_check",
-          "value": "\"ledger_outbox\".\"status\" in ('queued', 'done', 'dead')"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.service_commands": {
-      "name": "service_commands",
+    "public.service_command": {
+      "name": "service_command",
       "schema": "",
       "columns": {
         "id": {
@@ -149,45 +1006,20 @@
           "primaryKey": false,
           "notNull": true
         },
-        "command": {
-          "name": "command",
-          "type": "text",
+        "command_type": {
+          "name": "command_type",
+          "type": "command_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "config_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'active'"
-        },
-        "allow_partial": {
-          "name": "allow_partial",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "max_age_minutes": {
-          "name": "max_age_minutes",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "net_amount_add": {
-          "name": "net_amount_add",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'"
-        },
-        "net_amount_subtract": {
-          "name": "net_amount_subtract",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'"
+          "default": "'ACTIVE'"
         },
         "created_at": {
           "name": "created_at",
@@ -206,10 +1038,10 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "service_commands_service_id_services_id_fk": {
-          "name": "service_commands_service_id_services_id_fk",
-          "tableFrom": "service_commands",
-          "tableTo": "services",
+        "service_command_service_id_service_id_fk": {
+          "name": "service_command_service_id_service_id_fk",
+          "tableFrom": "service_command",
+          "tableTo": "service",
           "columnsFrom": [
             "service_id"
           ],
@@ -222,34 +1054,21 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "service_commands_service_command_unique": {
-          "name": "service_commands_service_command_unique",
+        "uq_service_command": {
+          "name": "uq_service_command",
           "nullsNotDistinct": false,
           "columns": [
             "service_id",
-            "command"
+            "command_type"
           ]
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "service_commands_command_check": {
-          "name": "service_commands_command_check",
-          "value": "\"service_commands\".\"command\" in ('payment', 'refund', 'cancel')"
-        },
-        "service_commands_status_check": {
-          "name": "service_commands_status_check",
-          "value": "\"service_commands\".\"status\" in ('active', 'disabled')"
-        },
-        "service_commands_net_types_check": {
-          "name": "service_commands_net_types_check",
-          "value": "\"service_commands\".\"net_amount_add\" <@ array['selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge']::text[] and \"service_commands\".\"net_amount_subtract\" <@ array['selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge']::text[]"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.service_movement_entries": {
-      "name": "service_movement_entries",
+    "public.service_command_spi": {
+      "name": "service_command_spi",
       "schema": "",
       "columns": {
         "id": {
@@ -265,227 +1084,61 @@
           "primaryKey": false,
           "notNull": true
         },
-        "entry_no": {
-          "name": "entry_no",
-          "type": "integer",
+        "spi_id": {
+          "name": "spi_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "side": {
-          "name": "side",
-          "type": "text",
+        "trigger_stage": {
+          "name": "trigger_stage",
+          "type": "spi_trigger",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
-        "account": {
-          "name": "account",
-          "type": "text",
+        "execution_sequence": {
+          "name": "execution_sequence",
+          "type": "smallint",
           "primaryKey": false,
           "notNull": true
         },
-        "amount_type": {
-          "name": "amount_type",
-          "type": "text",
+        "spi_operation": {
+          "name": "spi_operation",
+          "type": "varchar(200)",
           "primaryKey": false,
           "notNull": true
         },
-        "allow_overdraft": {
-          "name": "allow_overdraft",
-          "type": "boolean",
+        "status": {
+          "name": "status",
+          "type": "config_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": "'ACTIVE'"
         }
       },
       "indexes": {},
       "foreignKeys": {
-        "service_movement_entries_service_command_id_service_commands_id_fk": {
-          "name": "service_movement_entries_service_command_id_service_commands_id_fk",
-          "tableFrom": "service_movement_entries",
-          "tableTo": "service_commands",
+        "service_command_spi_service_command_id_service_command_id_fk": {
+          "name": "service_command_spi_service_command_id_service_command_id_fk",
+          "tableFrom": "service_command_spi",
+          "tableTo": "service_command",
           "columnsFrom": [
             "service_command_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "service_movement_entries_command_entry_unique": {
-          "name": "service_movement_entries_command_entry_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "service_command_id",
-            "entry_no"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "service_movement_entries_side_check": {
-          "name": "service_movement_entries_side_check",
-          "value": "\"service_movement_entries\".\"side\" in ('debit', 'credit')"
         },
-        "service_movement_entries_amount_type_check": {
-          "name": "service_movement_entries_amount_type_check",
-          "value": "\"service_movement_entries\".\"amount_type\" in ('amount', 'selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'net_amount', 'service_charge')"
-        },
-        "service_movement_entries_overdraft_check": {
-          "name": "service_movement_entries_overdraft_check",
-          "value": "not \"service_movement_entries\".\"allow_overdraft\" or \"service_movement_entries\".\"account\" not in ('{source}', '{destination}', '@world')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.service_pricing_tiers": {
-      "name": "service_pricing_tiers",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "service_command_id": {
-          "name": "service_command_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount_type": {
-          "name": "amount_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "min_amount": {
-          "name": "min_amount",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "max_amount": {
-          "name": "max_amount",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "calc_type": {
-          "name": "calc_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "base_amount_type": {
-          "name": "base_amount_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'amount'"
-        },
-        "include_base": {
-          "name": "include_base",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "fixed_amount": {
-          "name": "fixed_amount",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "percent_bps": {
-          "name": "percent_bps",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "min_value": {
-          "name": "min_value",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "max_value": {
-          "name": "max_value",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "effective_from": {
-          "name": "effective_from",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "effective_to": {
-          "name": "effective_to",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "service_pricing_tiers_lookup_idx": {
-          "name": "service_pricing_tiers_lookup_idx",
-          "columns": [
-            {
-              "expression": "service_command_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "currency",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "amount_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "service_pricing_tiers_service_command_id_service_commands_id_fk": {
-          "name": "service_pricing_tiers_service_command_id_service_commands_id_fk",
-          "tableFrom": "service_pricing_tiers",
-          "tableTo": "service_commands",
+        "service_command_spi_spi_id_spi_id_fk": {
+          "name": "service_command_spi_spi_id_spi_id_fk",
+          "tableFrom": "service_command_spi",
+          "tableTo": "spi",
           "columnsFrom": [
-            "service_command_id"
+            "spi_id"
           ],
           "columnsTo": [
             "id"
@@ -495,38 +1148,23 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "service_pricing_tiers_amount_type_check": {
-          "name": "service_pricing_tiers_amount_type_check",
-          "value": "\"service_pricing_tiers\".\"amount_type\" in ('selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge')"
-        },
-        "service_pricing_tiers_currency_check": {
-          "name": "service_pricing_tiers_currency_check",
-          "value": "\"service_pricing_tiers\".\"currency\" in ('USD', 'KHR')"
-        },
-        "service_pricing_tiers_calc_type_check": {
-          "name": "service_pricing_tiers_calc_type_check",
-          "value": "\"service_pricing_tiers\".\"calc_type\" in ('fixed', 'percent', 'fixed_plus_percent')"
-        },
-        "service_pricing_tiers_base_check": {
-          "name": "service_pricing_tiers_base_check",
-          "value": "\"service_pricing_tiers\".\"base_amount_type\" in ('amount', 'selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'service_charge') and \"service_pricing_tiers\".\"base_amount_type\" <> \"service_pricing_tiers\".\"amount_type\""
-        },
-        "service_pricing_tiers_amounts_check": {
-          "name": "service_pricing_tiers_amounts_check",
-          "value": "\"service_pricing_tiers\".\"min_amount\" >= 0 and (\"service_pricing_tiers\".\"max_amount\" is null or \"service_pricing_tiers\".\"max_amount\" >= \"service_pricing_tiers\".\"min_amount\") and \"service_pricing_tiers\".\"fixed_amount\" >= 0 and \"service_pricing_tiers\".\"percent_bps\" between 0 and 10000"
-        },
-        "service_pricing_tiers_effective_check": {
-          "name": "service_pricing_tiers_effective_check",
-          "value": "\"service_pricing_tiers\".\"effective_to\" is null or \"service_pricing_tiers\".\"effective_to\" > \"service_pricing_tiers\".\"effective_from\""
+      "uniqueConstraints": {
+        "uq_command_spi_sequence": {
+          "name": "uq_command_spi_sequence",
+          "nullsNotDistinct": false,
+          "columns": [
+            "service_command_id",
+            "trigger_stage",
+            "execution_sequence"
+          ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.services": {
-      "name": "services",
+    "public.service_group": {
+      "name": "service_group",
       "schema": "",
       "columns": {
         "id": {
@@ -536,24 +1174,86 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "service_code": {
-          "name": "service_code",
-          "type": "text",
+        "name": {
+          "name": "name",
+          "type": "varchar(140)",
           "primaryKey": false,
           "notNull": true
         },
-        "service_name": {
-          "name": "service_name",
-          "type": "text",
+        "description": {
+          "name": "description",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "config_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ACTIVE'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.spi": {
+      "name": "spi",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "code": {
+          "name": "code",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(140)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "spi_type": {
+          "name": "spi_type",
+          "type": "spi_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "config_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'active'"
+          "default": "'ACTIVE'"
         },
         "created_at": {
           "name": "created_at",
@@ -574,184 +1274,98 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "services_service_code_unique": {
-          "name": "services_service_code_unique",
+        "spi_code_unique": {
+          "name": "spi_code_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "service_code"
+            "code"
+          ]
+        },
+        "uq_spi_type": {
+          "name": "uq_spi_type",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "spi_type"
           ]
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "services_status_check": {
-          "name": "services_status_check",
-          "value": "\"services\".\"status\" in ('active', 'suspended', 'inactive')"
-        },
-        "services_code_check": {
-          "name": "services_code_check",
-          "value": "\"services\".\"service_code\" ~ '^[A-Z0-9_]{2,40}$'"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.transfer_amounts": {
-      "name": "transfer_amounts",
+    "public.spi_external_config": {
+      "name": "spi_external_config",
       "schema": "",
       "columns": {
-        "transfer_id": {
-          "name": "transfer_id",
+        "spi_id": {
+          "name": "spi_id",
           "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "spi_type": {
+          "name": "spi_type",
+          "type": "spi_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'EXTERNAL'"
+        },
+        "base_url": {
+          "name": "base_url",
+          "type": "varchar(500)",
           "primaryKey": false,
           "notNull": true
         },
-        "amount_type": {
-          "name": "amount_type",
-          "type": "text",
+        "protocol": {
+          "name": "protocol",
+          "type": "spi_protocol",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
-        "amount": {
-          "name": "amount",
-          "type": "bigint",
+        "auth_type": {
+          "name": "auth_type",
+          "type": "spi_auth_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
-        "pricing_tier_id": {
-          "name": "pricing_tier_id",
-          "type": "uuid",
+        "credential_ref": {
+          "name": "credential_ref",
+          "type": "varchar(200)",
           "primaryKey": false,
           "notNull": false
+        },
+        "timeout_ms": {
+          "name": "timeout_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 30000
+        },
+        "max_retries": {
+          "name": "max_retries",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         }
       },
       "indexes": {},
       "foreignKeys": {
-        "transfer_amounts_transfer_id_transfers_id_fk": {
-          "name": "transfer_amounts_transfer_id_transfers_id_fk",
-          "tableFrom": "transfer_amounts",
-          "tableTo": "transfers",
+        "fk_spi_external": {
+          "name": "fk_spi_external",
+          "tableFrom": "spi_external_config",
+          "tableTo": "spi",
           "columnsFrom": [
-            "transfer_id"
+            "spi_id",
+            "spi_type"
           ],
           "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "transfer_amounts_pricing_tier_id_service_pricing_tiers_id_fk": {
-          "name": "transfer_amounts_pricing_tier_id_service_pricing_tiers_id_fk",
-          "tableFrom": "transfer_amounts",
-          "tableTo": "service_pricing_tiers",
-          "columnsFrom": [
-            "pricing_tier_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "transfer_amounts_transfer_id_amount_type_pk": {
-          "name": "transfer_amounts_transfer_id_amount_type_pk",
-          "columns": [
-            "transfer_id",
-            "amount_type"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "transfer_amounts_amount_type_check": {
-          "name": "transfer_amounts_amount_type_check",
-          "value": "\"transfer_amounts\".\"amount_type\" in ('amount', 'selling_price', 'fee_from_customer', 'fee_from_partner', 'commission_to_agent_1', 'commission_to_partner', 'withholding_tax', 'discount', 'cash_back', 'cancellation_fee', 'commission_to_agent_2', 'purchasing_cost', 'vat', 'platform_commission', 'net_amount', 'service_charge')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.transfer_events": {
-      "name": "transfer_events",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "bigint",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "transfer_events_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "transfer_id": {
-          "name": "transfer_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "from_status": {
-          "name": "from_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "to_status": {
-          "name": "to_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "at": {
-          "name": "at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "transfer_events_transfer_idx": {
-          "name": "transfer_events_transfer_idx",
-          "columns": [
-            {
-              "expression": "transfer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "transfer_events_transfer_id_transfers_id_fk": {
-          "name": "transfer_events_transfer_id_transfers_id_fk",
-          "tableFrom": "transfer_events",
-          "tableTo": "transfers",
-          "columnsFrom": [
-            "transfer_id"
-          ],
-          "columnsTo": [
-            "id"
+            "id",
+            "spi_type"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -760,11 +1374,93 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "chk_spi_external_type": {
+          "name": "chk_spi_external_type",
+          "value": "\"spi_external_config\".\"spi_type\" = 'EXTERNAL'"
+        },
+        "chk_spi_credential": {
+          "name": "chk_spi_credential",
+          "value": "(\"spi_external_config\".\"auth_type\" = 'NONE') = (\"spi_external_config\".\"credential_ref\" IS NULL)"
+        },
+        "chk_spi_external_timeout": {
+          "name": "chk_spi_external_timeout",
+          "value": "\"spi_external_config\".\"timeout_ms\" > 0"
+        },
+        "chk_spi_external_retries": {
+          "name": "chk_spi_external_retries",
+          "value": "\"spi_external_config\".\"max_retries\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
-    "public.transfers": {
-      "name": "transfers",
+    "public.spi_internal_config": {
+      "name": "spi_internal_config",
+      "schema": "",
+      "columns": {
+        "spi_id": {
+          "name": "spi_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "spi_type": {
+          "name": "spi_type",
+          "type": "spi_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'INTERNAL'"
+        },
+        "handler_name": {
+          "name": "handler_name",
+          "type": "varchar(140)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "timeout_ms": {
+          "name": "timeout_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 10000
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "fk_spi_internal": {
+          "name": "fk_spi_internal",
+          "tableFrom": "spi_internal_config",
+          "tableTo": "spi",
+          "columnsFrom": [
+            "spi_id",
+            "spi_type"
+          ],
+          "columnsTo": [
+            "id",
+            "spi_type"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_spi_internal_type": {
+          "name": "chk_spi_internal_type",
+          "value": "\"spi_internal_config\".\"spi_type\" = 'INTERNAL'"
+        },
+        "chk_spi_internal_timeout": {
+          "name": "chk_spi_internal_timeout",
+          "value": "\"spi_internal_config\".\"timeout_ms\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.tier_amount_rule": {
+      "name": "tier_amount_rule",
       "schema": "",
       "columns": {
         "id": {
@@ -774,121 +1470,186 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "service_id": {
-          "name": "service_id",
+        "tier_config_id": {
+          "name": "tier_config_id",
           "type": "uuid",
           "primaryKey": false,
+          "notNull": true
+        },
+        "amount_type": {
+          "name": "amount_type",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "calc_sequence": {
+          "name": "calc_sequence",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "calc_method": {
+          "name": "calc_method",
+          "type": "calc_method",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_amount_type": {
+          "name": "base_amount_type",
+          "type": "varchar(30)",
+          "primaryKey": false,
           "notNull": false
+        },
+        "fixed_value": {
+          "name": "fixed_value",
+          "type": "numeric(20, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "percentage": {
+          "name": "percentage",
+          "type": "numeric(9, 6)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "formula_expression": {
+          "name": "formula_expression",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "min_value": {
+          "name": "min_value",
+          "type": "numeric(20, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_value": {
+          "name": "max_value",
+          "type": "numeric(20, 2)",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "tier_amount_rule_tier_config_id_tier_config_id_fk": {
+          "name": "tier_amount_rule_tier_config_id_tier_config_id_fk",
+          "tableFrom": "tier_amount_rule",
+          "tableTo": "tier_config",
+          "columnsFrom": [
+            "tier_config_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "tier_amount_rule_amount_type_amount_type_code_fk": {
+          "name": "tier_amount_rule_amount_type_amount_type_code_fk",
+          "tableFrom": "tier_amount_rule",
+          "tableTo": "amount_type",
+          "columnsFrom": [
+            "amount_type"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "tier_amount_rule_base_amount_type_amount_type_code_fk": {
+          "name": "tier_amount_rule_base_amount_type_amount_type_code_fk",
+          "tableFrom": "tier_amount_rule",
+          "tableTo": "amount_type",
+          "columnsFrom": [
+            "base_amount_type"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_tier_amount_type": {
+          "name": "uq_tier_amount_type",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tier_config_id",
+            "amount_type"
+          ]
+        },
+        "uq_tier_calc_sequence": {
+          "name": "uq_tier_calc_sequence",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tier_config_id",
+            "calc_sequence"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "chk_rule_not_amount": {
+          "name": "chk_rule_not_amount",
+          "value": "\"tier_amount_rule\".\"amount_type\" <> 'AMOUNT'"
+        },
+        "chk_rule_fixed": {
+          "name": "chk_rule_fixed",
+          "value": "\"tier_amount_rule\".\"calc_method\" <> 'FIXED' OR (\n        \"tier_amount_rule\".\"formula_expression\" IS NULL\n        AND (\"tier_amount_rule\".\"fixed_value\" IS NOT NULL OR \"tier_amount_rule\".\"percentage\" IS NOT NULL)\n        AND (\"tier_amount_rule\".\"percentage\" IS NULL) = (\"tier_amount_rule\".\"base_amount_type\" IS NULL)\n        AND (\"tier_amount_rule\".\"base_amount_type\" IS NULL OR \"tier_amount_rule\".\"base_amount_type\" <> \"tier_amount_rule\".\"amount_type\")\n      )"
+        },
+        "chk_rule_formula": {
+          "name": "chk_rule_formula",
+          "value": "\"tier_amount_rule\".\"calc_method\" <> 'FORMULA' OR (\n        \"tier_amount_rule\".\"formula_expression\" IS NOT NULL\n        AND \"tier_amount_rule\".\"formula_expression\" ~ '^[A-Z0-9_ .+\\-*/()]+$'\n        AND \"tier_amount_rule\".\"base_amount_type\" IS NULL AND \"tier_amount_rule\".\"fixed_value\" IS NULL AND \"tier_amount_rule\".\"percentage\" IS NULL\n      )"
+        },
+        "chk_rule_minmax": {
+          "name": "chk_rule_minmax",
+          "value": "\"tier_amount_rule\".\"min_value\" IS NULL OR \"tier_amount_rule\".\"max_value\" IS NULL OR \"tier_amount_rule\".\"max_value\" >= \"tier_amount_rule\".\"min_value\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.tier_config": {
+      "name": "tier_config",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
         "service_command_id": {
           "name": "service_command_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
-        },
-        "original_transfer_id": {
-          "name": "original_transfer_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_customer_id": {
-          "name": "source_customer_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_account_id": {
-          "name": "source_account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "destination_customer_id": {
-          "name": "destination_customer_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "destination_account_id": {
-          "name": "destination_account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
           "notNull": true
         },
-        "asset": {
-          "name": "asset",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount": {
-          "name": "amount",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source_net": {
-          "name": "source_net",
-          "type": "bigint",
+        "min_amount": {
+          "name": "min_amount",
+          "type": "numeric(20, 2)",
           "primaryKey": false,
           "notNull": false
         },
-        "destination_net": {
-          "name": "destination_net",
-          "type": "bigint",
+        "max_amount": {
+          "name": "max_amount",
+          "type": "numeric(20, 2)",
           "primaryKey": false,
           "notNull": false
         },
-        "ledger_tx_id": {
-          "name": "ledger_tx_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "external_ref": {
-          "name": "external_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "failure_reason": {
-          "name": "failure_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
+        "status": {
+          "name": "status",
+          "type": "config_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'{}'::jsonb"
+          "default": "'ACTIVE'"
         },
         "created_at": {
           "name": "created_at",
@@ -905,98 +1666,14 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "transfers_source_created_idx": {
-          "name": "transfers_source_created_idx",
-          "columns": [
-            {
-              "expression": "source_customer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "transfers_destination_created_idx": {
-          "name": "transfers_destination_created_idx",
-          "columns": [
-            {
-              "expression": "destination_customer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "transfers_original_idx": {
-          "name": "transfers_original_idx",
-          "columns": [
-            {
-              "expression": "original_transfer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
-        "transfers_service_id_services_id_fk": {
-          "name": "transfers_service_id_services_id_fk",
-          "tableFrom": "transfers",
-          "tableTo": "services",
-          "columnsFrom": [
-            "service_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "transfers_service_command_id_service_commands_id_fk": {
-          "name": "transfers_service_command_id_service_commands_id_fk",
-          "tableFrom": "transfers",
-          "tableTo": "service_commands",
+        "tier_config_service_command_id_service_command_id_fk": {
+          "name": "tier_config_service_command_id_service_command_id_fk",
+          "tableFrom": "tier_config",
+          "tableTo": "service_command",
           "columnsFrom": [
             "service_command_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "transfers_original_transfer_id_transfers_id_fk": {
-          "name": "transfers_original_transfer_id_transfers_id_fk",
-          "tableFrom": "transfers",
-          "tableTo": "transfers",
-          "columnsFrom": [
-            "original_transfer_id"
           ],
           "columnsTo": [
             "id"
@@ -1006,58 +1683,132 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "transfers_idempotency_key_unique": {
-          "name": "transfers_idempotency_key_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "idempotency_key"
-          ]
-        },
-        "transfers_type_external_ref_unique": {
-          "name": "transfers_type_external_ref_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "type",
-            "external_ref"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "transfers_type_check": {
-          "name": "transfers_type_check",
-          "value": "\"transfers\".\"type\" in ('payment', 'refund', 'cancel', 'topup')"
-        },
-        "transfers_status_check": {
-          "name": "transfers_status_check",
-          "value": "\"transfers\".\"status\" in ('pending', 'posted', 'failed', 'reversed')"
-        },
-        "transfers_currency_check": {
-          "name": "transfers_currency_check",
-          "value": "\"transfers\".\"currency\" in ('USD', 'KHR')"
-        },
-        "transfers_amount_check": {
-          "name": "transfers_amount_check",
-          "value": "\"transfers\".\"amount\" > 0"
-        },
-        "transfers_service_check": {
-          "name": "transfers_service_check",
-          "value": "(\"transfers\".\"type\" = 'topup') = (\"transfers\".\"service_command_id\" is null)"
-        },
-        "transfers_original_check": {
-          "name": "transfers_original_check",
-          "value": "(\"transfers\".\"type\" in ('refund', 'cancel')) = (\"transfers\".\"original_transfer_id\" is not null)"
-        },
-        "transfers_parties_check": {
-          "name": "transfers_parties_check",
-          "value": "(\"transfers\".\"source_customer_id\" is null) = (\"transfers\".\"source_account_id\" is null) and (\"transfers\".\"destination_customer_id\" is null) = (\"transfers\".\"destination_account_id\" is null) and (\"transfers\".\"source_customer_id\" is not null or \"transfers\".\"destination_customer_id\" is not null)"
+        "chk_tier_range": {
+          "name": "chk_tier_range",
+          "value": "(\"tier_config\".\"min_amount\" IS NULL OR \"tier_config\".\"min_amount\" >= 0) AND (\"tier_config\".\"min_amount\" IS NULL OR \"tier_config\".\"max_amount\" IS NULL OR \"tier_config\".\"max_amount\" > \"tier_config\".\"min_amount\")"
         }
       },
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.calc_method": {
+      "name": "calc_method",
+      "schema": "public",
+      "values": [
+        "FIXED",
+        "FORMULA"
+      ]
+    },
+    "public.command_type": {
+      "name": "command_type",
+      "schema": "public",
+      "values": [
+        "PAYMENT",
+        "REFUND",
+        "CANCEL"
+      ]
+    },
+    "public.config_status": {
+      "name": "config_status",
+      "schema": "public",
+      "values": [
+        "ACTIVE",
+        "INACTIVE"
+      ]
+    },
+    "public.ledger_step": {
+      "name": "ledger_step",
+      "schema": "public",
+      "values": [
+        "RESERVE",
+        "SETTLE",
+        "REVERT",
+        "RELEASE"
+      ]
+    },
+    "public.ledger_tx_status": {
+      "name": "ledger_tx_status",
+      "schema": "public",
+      "values": [
+        "PLANNED",
+        "POSTED",
+        "REJECTED"
+      ]
+    },
+    "public.movement_status": {
+      "name": "movement_status",
+      "schema": "public",
+      "values": [
+        "PENDING",
+        "POSTED",
+        "FAILED",
+        "REVERSED"
+      ]
+    },
+    "public.payment_status": {
+      "name": "payment_status",
+      "schema": "public",
+      "values": [
+        "PENDING",
+        "PROCESSING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "REVERSED"
+      ]
+    },
+    "public.spi_auth_type": {
+      "name": "spi_auth_type",
+      "schema": "public",
+      "values": [
+        "NONE",
+        "API_KEY",
+        "BASIC",
+        "OAUTH2",
+        "MTLS"
+      ]
+    },
+    "public.spi_protocol": {
+      "name": "spi_protocol",
+      "schema": "public",
+      "values": [
+        "REST",
+        "SOAP",
+        "ISO8583",
+        "ISO20022"
+      ]
+    },
+    "public.spi_trigger": {
+      "name": "spi_trigger",
+      "schema": "public",
+      "values": [
+        "PRE_PAYMENT",
+        "POST_PAYMENT",
+        "NOTIFICATION"
+      ]
+    },
+    "public.spi_type": {
+      "name": "spi_type",
+      "schema": "public",
+      "values": [
+        "INTERNAL",
+        "EXTERNAL"
+      ]
+    },
+    "public.stock_role": {
+      "name": "stock_role",
+      "schema": "public",
+      "values": [
+        "PAYER",
+        "PAYEE",
+        "SPECIFIC"
+      ]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

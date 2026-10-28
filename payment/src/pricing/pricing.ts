@@ -1,81 +1,75 @@
-import {
-  AMOUNT_TYPES,
-  type AmountType,
-  type BaseAmountType,
-  type CalcType,
-  type PricedAmountType,
-} from '../db/schema.js';
+import { add, cmp, div, evaluate, formulaRefs, frac, fromDecimal, fromMinor, mul, parseFormula, toMinorRounded, type Fraction } from './expression.js';
 
-export type PricingRule = {
-  id?: string;
-  amountType: PricedAmountType;
-  calcType: CalcType;
-  baseAmountType: BaseAmountType;
-  includeBase: boolean;
-  fixedAmount: bigint;
-  percentBps: number;
-  minValue: bigint | null;
-  maxValue: bigint | null;
+export type AmountRule = {
+  amountType: string;
+  calcSequence: number;
+  calcMethod: 'FIXED' | 'FORMULA';
+  baseAmountType: string | null;
+  fixedValue: string | null;
+  percentage: string | null; // 5 = 5%
+  formulaExpression: string | null;
+  minValue: string | null;
+  maxValue: string | null;
 };
 
-export type NetAmountFormula = {
-  netAmountAdd: PricedAmountType[];
-  netAmountSubtract: PricedAmountType[];
-};
-
-export type AmountValues = Record<AmountType, bigint>;
+const HUNDRED = frac(100n);
 
 /**
- * (include_base ? base : 0) + clamp(fixed + base × percent_bps / 10,000, min_value, max_value),
- * the percentage rounded half-up. All values in the smallest currency unit.
- * Example: selling_price = amount + amount × 5% → base amount, include_base, 500 bps.
+ * Checks a tier's rules before they are saved: every amount type exists, calc_sequence is unique,
+ * formulas parse, and a rule only uses AMOUNT or amount types calculated earlier.
  */
-export function ruleValue(base: bigint, rule: PricingRule): bigint {
-  let value = 0n;
-  if (rule.calcType === 'fixed' || rule.calcType === 'fixed_plus_percent') {
-    value += rule.fixedAmount;
+export function validateRules(rules: AmountRule[], knownTypes: ReadonlySet<string>): string[] {
+  const problems: string[] = [];
+  const ordered = [...rules].sort((a, b) => a.calcSequence - b.calcSequence);
+  const available = new Set(['AMOUNT']);
+  const seen = new Set<number>();
+  for (const r of ordered) {
+    const where = `${r.amountType} (sequence ${r.calcSequence})`;
+    if (!knownTypes.has(r.amountType)) problems.push(`${where}: unknown amount type`);
+    if (r.amountType === 'AMOUNT') problems.push(`${where}: AMOUNT comes from the order and has no rule`);
+    if (seen.has(r.calcSequence)) problems.push(`${where}: calc_sequence is used twice`);
+    seen.add(r.calcSequence);
+    let refs: string[] = [];
+    try {
+      refs = r.calcMethod === 'FORMULA' ? [...formulaRefs(parseFormula(r.formulaExpression ?? ''))] : r.baseAmountType ? [r.baseAmountType] : [];
+    } catch (err) {
+      problems.push(`${where}: ${(err as Error).message}`);
+    }
+    for (const ref of refs) {
+      if (!available.has(ref)) problems.push(`${where}: uses ${ref}, which is not AMOUNT or calculated earlier`);
+    }
+    available.add(r.amountType);
   }
-  if (rule.calcType === 'percent' || rule.calcType === 'fixed_plus_percent') {
-    value += (base * BigInt(rule.percentBps) + 5_000n) / 10_000n;
-  }
-  if (rule.minValue !== null && value < rule.minValue) value = rule.minValue;
-  if (rule.maxValue !== null && value > rule.maxValue) value = rule.maxValue;
-  return rule.includeBase ? base + value : value;
+  return problems;
 }
 
 /**
- * Calculates every amount type for one transaction:
- * - `amount` is the request amount;
- * - priced types come from their rule (0 when no rule applies). Rules based on `amount` run
- *   first, then rules based on another type (one level deep, e.g. VAT = 10% of fee_from_customer);
- * - `net_amount` = amount + Σ(netAmountAdd) − Σ(netAmountSubtract).
+ * Calculates every amount type of an order, in calc_sequence order. Each result is clamped to
+ * [min_value, max_value] and rounded half up to 2 decimals; later rules see the rounded values.
+ * Returns minor units (cents / sen).
  */
-export function computeAmounts(
-  amount: bigint,
-  rules: PricingRule[],
-  formula: NetAmountFormula,
-): { values: AmountValues; ruleIds: Partial<Record<AmountType, string>> } {
-  const values = Object.fromEntries(AMOUNT_TYPES.map((t) => [t, 0n])) as AmountValues;
-  const ruleIds: Partial<Record<AmountType, string>> = {};
-  values.amount = amount;
+export function computeAmounts(amountMinor: bigint, rules: AmountRule[]): Map<string, bigint> {
+  const exact = new Map<string, Fraction>([['AMOUNT', fromMinor(amountMinor)]]);
+  const result = new Map<string, bigint>([['AMOUNT', amountMinor]]);
 
-  const direct = rules.filter((r) => r.baseAmountType === 'amount');
-  const derived = rules.filter((r) => r.baseAmountType !== 'amount');
-  const derivedTypes = new Set<AmountType>(derived.map((r) => r.amountType));
-
-  for (const rule of [...direct, ...derived]) {
-    if (derivedTypes.has(rule.baseAmountType)) {
-      throw new Error(
-        `${rule.amountType} is based on ${rule.baseAmountType}, which is itself based on another type`,
-      );
+  for (const r of [...rules].sort((a, b) => a.calcSequence - b.calcSequence)) {
+    let value: Fraction;
+    if (r.calcMethod === 'FORMULA') {
+      value = evaluate(parseFormula(r.formulaExpression ?? ''), exact);
+    } else {
+      value = r.fixedValue ? fromDecimal(r.fixedValue) : frac(0n);
+      if (r.percentage && r.baseAmountType) {
+        const base = exact.get(r.baseAmountType);
+        if (!base) throw new Error(`${r.amountType}: ${r.baseAmountType} has no value yet`);
+        value = add(value, div(mul(base, fromDecimal(r.percentage)), HUNDRED));
+      }
     }
-    values[rule.amountType] = ruleValue(values[rule.baseAmountType], rule);
-    if (rule.id) ruleIds[rule.amountType] = rule.id;
+    if (r.minValue && cmp(value, fromDecimal(r.minValue)) < 0) value = fromDecimal(r.minValue);
+    if (r.maxValue && cmp(value, fromDecimal(r.maxValue)) > 0) value = fromDecimal(r.maxValue);
+    const minor = toMinorRounded(value);
+    if (minor < 0n) throw new Error(`${r.amountType} is negative`);
+    result.set(r.amountType, minor);
+    exact.set(r.amountType, fromMinor(minor));
   }
-
-  const sum = (types: PricedAmountType[]) => types.reduce((acc, t) => acc + values[t], 0n);
-  values.net_amount = amount + sum(formula.netAmountAdd) - sum(formula.netAmountSubtract);
-  if (values.net_amount < 0n) throw new Error('net amount is negative');
-
-  return { values, ruleIds };
+  return result;
 }

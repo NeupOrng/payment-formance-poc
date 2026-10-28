@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { Search } from 'lucide-vue-next'
 
-const { data: customers, status, error, refresh } = await useFetch<Customer[]>('/api/customers')
+const type = ref<'all' | ProfileType>('all')
 const search = ref('')
+const { data: profiles, status, error, refresh } = await useFetch<Profile[]>('/api/profiles', {
+  query: computed(() => ({ type: type.value === 'all' ? undefined : type.value })),
+})
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return customers.value ?? []
-  return (customers.value ?? []).filter(c =>
-    c.fullName.toLowerCase().includes(q) || c.phoneNumber.includes(q) || c.id.startsWith(q),
-  )
+  const list = profiles.value ?? []
+  if (!q) return list
+  return list.filter(p => p.fullName.toLowerCase().includes(q) || p.profileNumber.toLowerCase().includes(q) || (p.phoneNumber ?? '').includes(q))
 })
 </script>
 
@@ -18,21 +20,39 @@ const filtered = computed(() => {
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">
-          Customers
+          Profiles
         </h1>
         <p class="text-sm text-muted-foreground">
-          Select a customer to see their USD and KHR balances and transaction history.
+          Customers, agents and the bank's own accounts. Open one to see its stocks and payment orders.
         </p>
       </div>
-      <div class="relative w-full sm:w-72">
-        <Search class="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input v-model="search" placeholder="Search name, phone or ID" class="pl-8" />
+      <div class="flex flex-wrap items-center gap-2">
+        <Tabs v-model="type">
+          <TabsList>
+            <TabsTrigger value="all">
+              All
+            </TabsTrigger>
+            <TabsTrigger value="INDIVIDUAL">
+              Individual
+            </TabsTrigger>
+            <TabsTrigger value="AGENT">
+              Agent
+            </TabsTrigger>
+            <TabsTrigger value="INTERNAL">
+              Internal
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <div class="relative w-64">
+          <Search class="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input v-model="search" placeholder="Name, CIF or phone" class="pl-8" />
+        </div>
       </div>
     </div>
 
     <Card v-if="error" class="border-destructive/50">
       <CardHeader>
-        <CardTitle>Could not load customers</CardTitle>
+        <CardTitle>Could not load profiles</CardTitle>
         <CardDescription>{{ error.statusMessage || error.message }}</CardDescription>
         <CardAction>
           <Button variant="outline" size="sm" @click="refresh()">
@@ -47,11 +67,11 @@ const filtered = computed(() => {
         <TableHeader>
           <TableRow>
             <TableHead>Name</TableHead>
+            <TableHead>Type</TableHead>
             <TableHead>Phone</TableHead>
-            <TableHead>KYC</TableHead>
             <TableHead>Status</TableHead>
             <TableHead class="text-right">
-              Joined
+              Created
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -63,32 +83,30 @@ const filtered = computed(() => {
               </TableCell>
             </TableRow>
           </template>
-          <TableRow
-            v-for="customer in filtered"
-            v-else
-            :key="customer.id"
-            class="cursor-pointer"
-            @click="navigateTo(`/customers/${customer.id}`)"
-          >
+          <TableRow v-for="p in filtered" v-else :key="p.id" class="cursor-pointer" @click="navigateTo(`/profiles/${p.id}`)">
             <TableCell>
-              <NuxtLink :to="`/customers/${customer.id}`" class="font-medium hover:underline" @click.stop>
-                {{ customer.fullName }}
+              <NuxtLink :to="`/profiles/${p.id}`" class="font-medium hover:underline" @click.stop>
+                {{ p.fullName }}
               </NuxtLink>
               <div class="font-mono text-xs text-muted-foreground">
-                {{ shortId(customer.id) }}
+                {{ p.profileNumber }}
               </div>
             </TableCell>
-            <TableCell class="tabular-nums">
-              {{ customer.phoneNumber }}
+            <TableCell>
+              <Badge variant="outline">
+                {{ humanize(p.profileType) }}
+              </Badge>
             </TableCell>
-            <TableCell><StatusBadge :status="customer.kycStatus" /></TableCell>
-            <TableCell><StatusBadge :status="customer.status" /></TableCell>
+            <TableCell class="tabular-nums text-muted-foreground">
+              {{ p.phoneNumber ?? '—' }}
+            </TableCell>
+            <TableCell><StatusBadge :status="p.status" /></TableCell>
             <TableCell class="text-right text-muted-foreground">
-              {{ formatDateTime(customer.createdAt) }}
+              {{ formatDateTime(p.createdAt) }}
             </TableCell>
           </TableRow>
           <TableEmpty v-if="status !== 'pending' && !filtered.length" :colspan="5">
-            {{ search ? 'No customer matches your search.' : 'No customers yet.' }}
+            No profiles match.
           </TableEmpty>
         </TableBody>
       </Table>

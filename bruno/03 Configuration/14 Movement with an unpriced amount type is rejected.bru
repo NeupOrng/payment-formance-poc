@@ -1,0 +1,32 @@
+meta {
+  name: Movement with an unpriced amount type is rejected
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/PAYMENT/tiers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "minAmount": "100.00",
+    "rules": [],
+    "movements": [
+      {
+        "movementSequence": 1,
+        "amountType": "FEE_FROM_CUSTOMER",
+        "fromStockRole": "PAYER",
+        "toStockRole": "PAYEE"
+      }
+    ]
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+}

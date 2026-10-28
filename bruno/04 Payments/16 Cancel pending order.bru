@@ -1,0 +1,25 @@
+meta {
+  name: Cancel pending order
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{pendingId}}/cancel
+  body: none
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("CANCELLED by user", function () {
+    expect(res.body.status).to.equal("CANCELLED"); expect(res.body.statusReasonCode).to.equal("CANCELLED_BY_USER");
+  });
+}

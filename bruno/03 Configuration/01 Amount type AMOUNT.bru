@@ -1,0 +1,24 @@
+meta {
+  name: Amount type AMOUNT
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{paymentUrl}}/amount-types
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "AMOUNT",
+    "name": "Amount"
+  }
+}
+
+tests {
+  test("status is 201 or 409", function () {
+    expect([201, 409]).to.include(res.status);
+  });
+}

@@ -8,9 +8,10 @@ script:pre-request {
 }
 
 docs {
-  End-to-end tests for the customer and payment services (and the Formance ledger they use).
+  End-to-end tests for the Profile Service and the Payment Engine (Temporal sagas on Formance).
   Run the whole collection in order: later requests use ids saved by earlier ones.
 
-  Requires the local stack: `task up` (the seed is not needed; the collection creates its own service).
+  Requires the local stack: `task up` (the seed is not needed; the collection creates its own
+  bank profile, customers, SPI and services).
   CLI: `task bruno`
 }

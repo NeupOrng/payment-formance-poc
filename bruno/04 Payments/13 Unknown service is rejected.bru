@@ -1,0 +1,30 @@
+meta {
+  name: Unknown service is rejected
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "NO_SUCH_SERVICE",
+    "amount": "1.00",
+    "payerStockId": "{{payerStock}}",
+    "payeeStockId": "{{payeeStock}}"
+  }
+}
+
+tests {
+  test("status is 404", function () {
+    expect(res.status).to.equal(404);
+  });
+}

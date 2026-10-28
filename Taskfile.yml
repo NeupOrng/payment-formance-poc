@@ -3,7 +3,7 @@ version: '3'
 
 vars:
   COMPOSE: docker compose -f architecture/docker-compose.yml
-  CUSTOMER_URL: http://localhost:4001
+  PROFILE_URL: http://localhost:4001
   PAYMENT_URL: http://localhost:4002
   CLIENT_URL: http://localhost:4000
 
@@ -31,12 +31,12 @@ tasks:
         echo "created architecture/.env with random passwords"
 
   up:
-    desc: Build and start every service (Postgres, Formance Ledger, customer, payment, client)
+    desc: Build and start every service (Postgres, Formance Ledger, Temporal, partner mock, profile, payment, client)
     deps: [env]
     cmds:
       - '{{.COMPOSE}} up -d --build'
       - task: wait
-      - echo "client → {{.CLIENT_URL}}   customer → {{.CUSTOMER_URL}}/docs   payment → {{.PAYMENT_URL}}/docs   ledger → http://localhost:3068"
+      - echo "client → {{.CLIENT_URL}}   profile → {{.PROFILE_URL}}/docs   payment → {{.PAYMENT_URL}}/docs   ledger → http://localhost:3068"
 
   down:
     desc: Stop every service (data is kept)
@@ -65,11 +65,11 @@ tasks:
       - '{{.COMPOSE}} logs -f --tail 100 {{.CLI_ARGS}}'
 
   wait:
-    desc: Wait until the customer, payment and client services answer
+    desc: Wait until the profile, payment and client services answer
     internal: true
     cmds:
       - |
-        for url in {{.CUSTOMER_URL}}/health {{.PAYMENT_URL}}/health {{.CLIENT_URL}}; do
+        for url in {{.PROFILE_URL}}/health {{.PAYMENT_URL}}/health {{.CLIENT_URL}}; do
           printf "waiting for $url "
           for i in $(seq 1 60); do
             if curl -sf "$url" > /dev/null; then echo ok; break; fi
@@ -79,15 +79,15 @@ tasks:
         done
 
   seed:
-    desc: Load the example services (EDC_BILL, MOBILE_TOPUP) and their fee tiers
+    desc: Load the example configuration (bank profile, agent, SPIs, services, tiers)
     dir: payment
     cmds:
-      - PAYMENT_URL={{.PAYMENT_URL}} npm run seed
+      - PROFILE_URL={{.PROFILE_URL}} PAYMENT_URL={{.PAYMENT_URL}} npm run seed
 
   smoke:
     desc: Run the end-to-end smoke test against the running stack
     cmds:
-      - CUSTOMER_URL={{.CUSTOMER_URL}} PAYMENT_URL={{.PAYMENT_URL}} node architecture/scripts/smoke.mjs
+      - PROFILE_URL={{.PROFILE_URL}} PAYMENT_URL={{.PAYMENT_URL}} node architecture/scripts/smoke.mjs
 
   bruno:
     desc: Run the Bruno API collection (bruno/) against the running stack
@@ -106,28 +106,28 @@ tasks:
   install:
     desc: Install npm dependencies on the host (for editor support and local tests)
     cmds:
-      - npm --prefix customer ci
+      - npm --prefix profile ci
       - npm --prefix payment ci
       - npm --prefix client ci
 
   rebuild:
     desc: Rebuild service images and refresh their node_modules volumes (after changing package.json)
     cmds:
-      - '{{.COMPOSE}} rm -sf customer-service payment-service client'
-      - docker volume rm -f mobilebank_customer-node-modules mobilebank_payment-node-modules mobilebank_client-node-modules
-      - '{{.COMPOSE}} up -d --build customer-service payment-service client'
+      - '{{.COMPOSE}} rm -sf profile-service payment-service client'
+      - docker volume rm -f mobilebank_profile-node-modules mobilebank_payment-node-modules mobilebank_client-node-modules
+      - '{{.COMPOSE}} up -d --build profile-service payment-service client'
       - task: wait
 
   test:
     desc: Run unit tests for both services
     cmds:
-      - npm --prefix customer test
+      - npm --prefix profile test
       - npm --prefix payment test
 
   typecheck:
     desc: Type-check all three apps
     cmds:
-      - cd customer && npx tsc --noEmit
+      - cd profile && npx tsc --noEmit
       - cd payment && npx tsc --noEmit
       - cd client && npx nuxi typecheck
 
@@ -137,20 +137,20 @@ tasks:
       - cd {{.CLI_ARGS}} && npx drizzle-kit generate
 
   db:studio:
-    desc: 'Open Drizzle Studio on a service database: customer or payment (e.g. task db:studio -- payment)'
+    desc: 'Open Drizzle Studio on a service database: profile or payment (e.g. task db:studio -- payment)'
     dotenv: ['architecture/.env']
     dir: '{{.CLI_ARGS}}'
     cmds:
       - |
         case "{{.CLI_ARGS}}" in
-          customer) PW="$CUSTOMER_DB_PASSWORD" ;;
+          profile) PW="$PROFILE_DB_PASSWORD" ;;
           payment) PW="$PAYMENT_DB_PASSWORD" ;;
-          *) echo "usage: task db:studio -- customer|payment"; exit 1 ;;
+          *) echo "usage: task db:studio -- profile|payment"; exit 1 ;;
         esac
         DATABASE_URL="postgresql://{{.CLI_ARGS}}_svc:$PW@localhost:5440/{{.CLI_ARGS}}" npx drizzle-kit studio
 
   db:psql:
-    desc: 'Open psql on a database: customer, payment or ledger (e.g. task db:psql -- payment)'
+    desc: 'Open psql on a database: profile, payment or ledger (e.g. task db:psql -- payment)'
     cmds:
       - '{{.COMPOSE}} exec postgres psql -U postgres -d {{.CLI_ARGS}}'
     interactive: true

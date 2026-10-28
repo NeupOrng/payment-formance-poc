@@ -1,0 +1,21 @@
+meta {
+  name: List orders of the customer
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{paymentUrl}}/payments?customerId={{payerId}}
+  body: none
+  auth: none
+}
+
+params:query {
+  customerId: {{payerId}}
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

@@ -14,13 +14,15 @@ export default defineNuxtConfig({
     componentDir: '@/components/ui',
   },
   // Server-only: the browser talks to /api/* on this app, which proxies to the services.
-  // Override with NUXT_CUSTOMER_SERVICE_URL / NUXT_PAYMENT_SERVICE_URL.
+  // Override with NUXT_PROFILE_SERVICE_URL / NUXT_PAYMENT_SERVICE_URL.
   runtimeConfig: {
-    customerServiceUrl: 'http://localhost:4001',
+    profileServiceUrl: 'http://localhost:4001',
     paymentServiceUrl: 'http://localhost:4002',
     public: {
       // One timezone for server and browser rendering, so SSR and hydration show the same times.
       timeZone: 'Asia/Phnom_Penh',
+      // Links from an order to its saga in the Temporal UI.
+      temporalUiUrl: 'http://localhost:8233',
     },
   },
   app: {

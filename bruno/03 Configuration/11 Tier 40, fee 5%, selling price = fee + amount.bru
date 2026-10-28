@@ -1,0 +1,66 @@
+meta {
+  name: Tier: ≤ $40, fee 5%, selling price = fee + amount
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/PAYMENT/tiers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "minAmount": "0.01",
+    "maxAmount": "40.01",
+    "rules": [
+      {
+        "amountType": "FEE_FROM_CUSTOMER",
+        "calcSequence": 1,
+        "calcMethod": "FIXED",
+        "baseAmountType": "AMOUNT",
+        "percentage": "5"
+      },
+      {
+        "amountType": "SELLING_PRICE",
+        "calcSequence": 2,
+        "calcMethod": "FORMULA",
+        "formulaExpression": "FEE_FROM_CUSTOMER + AMOUNT"
+      }
+    ],
+    "movements": [
+      {
+        "movementSequence": 1,
+        "amountType": "AMOUNT",
+        "fromStockRole": "PAYER",
+        "toStockRole": "PAYEE"
+      },
+      {
+        "movementSequence": 2,
+        "amountType": "FEE_FROM_CUSTOMER",
+        "fromStockRole": "PAYER",
+        "toStockRole": "SPECIFIC",
+        "toStockId": "{{feeStock}}"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  bru.setVar("tierId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("2 rules, 2 movements", function () {
+    expect(res.body.rules).to.have.length(2); expect(res.body.movements).to.have.length(2);
+  });
+}
+
+docs {
+  The spec example: SELLING_PRICE = FEE_FROM_CUSTOMER + AMOUNT; payer → payee AMOUNT, payer → fee income FEE_FROM_CUSTOMER.
+}

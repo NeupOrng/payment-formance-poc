@@ -1,0 +1,31 @@
+meta {
+  name: CANCEL tier: payee → payer
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/CANCEL/tiers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "rules": [],
+    "movements": [
+      {
+        "movementSequence": 1,
+        "amountType": "AMOUNT",
+        "fromStockRole": "PAYEE",
+        "toStockRole": "PAYER"
+      }
+    ]
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

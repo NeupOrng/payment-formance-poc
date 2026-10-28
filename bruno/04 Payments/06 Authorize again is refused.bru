@@ -1,0 +1,21 @@
+meta {
+  name: Authorize again is refused
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{orderId}}/authorize
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("status is 409", function () {
+    expect(res.status).to.equal(409);
+  });
+}

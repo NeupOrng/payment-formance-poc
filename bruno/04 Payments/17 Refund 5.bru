@@ -1,0 +1,31 @@
+meta {
+  name: Refund $5
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{orderId}}/refund
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "amount": "5.00"
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("COMPLETED REFUND order", function () {
+    expect(res.body.status).to.equal("COMPLETED"); expect(res.body.commandType).to.equal("REFUND");
+  });
+}

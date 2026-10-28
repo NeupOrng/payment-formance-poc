@@ -1,0 +1,35 @@
+meta {
+  name: Create payee (KYC verified)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{profileUrl}}/profiles
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "profileType": "INDIVIDUAL",
+    "fullName": "Bruno Payee",
+    "phoneNumber": "{{payeePhone}}",
+    "kycVerified": true
+  }
+}
+
+script:pre-request {
+  bru.setVar("payeePhone", "+8551" + Math.floor(10000000 + Math.random() * 89999999));
+}
+
+script:post-response {
+  bru.setVar("payeeId", res.body.id);
+  bru.setVar("payeeStock", res.body.accounts.flatMap((a) => a.stocks).find((s) => s.currency === "USD").id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

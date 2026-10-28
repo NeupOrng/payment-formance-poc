@@ -3,13 +3,12 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
-  IsArray,
-  IsBoolean,
-  IsDateString,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
+  IsUUID,
   Length,
   Matches,
   Max,
@@ -17,189 +16,317 @@ import {
   ValidateNested,
 } from 'class-validator';
 import {
-  AMOUNT_TYPES,
-  BASE_AMOUNT_TYPES,
-  CALC_TYPES,
-  COMMAND_STATUSES,
-  COMMANDS,
+  calcMethod,
+  commandType,
+  configStatus,
   CURRENCIES,
-  ENTRY_SIDES,
-  PARTY_ACCOUNTS,
-  PRICED_AMOUNT_TYPES,
-  SERVICE_STATUSES,
+  spiAuthType,
+  spiProtocol,
+  spiTrigger,
+  spiType,
+  stockRole,
 } from '../db/schema.js';
 
-const DIGITS = /^\d+$/;
+const CODE = /^[A-Z][A-Z0-9_]*$/;
+const DECIMAL2 = /^\d+(\.\d{1,2})?$/;
+const DECIMAL6 = /^\d{1,3}(\.\d{1,6})?$/;
+
+export class CreateAmountTypeDto {
+  @ApiProperty({ example: 'SELLING_PRICE' })
+  @Matches(CODE)
+  @Length(1, 30)
+  code: string;
+
+  @ApiProperty({ example: 'Selling price' })
+  @IsString()
+  @Length(1, 100)
+  name: string;
+}
+
+export class CreateServiceGroupDto {
+  @ApiProperty({ example: 'Bill payments' })
+  @IsString()
+  @Length(1, 140)
+  name: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Length(1, 255)
+  description?: string;
+}
+
+export class UpdateServiceGroupDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Length(1, 140)
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Length(1, 255)
+  description?: string;
+
+  @ApiPropertyOptional({ enum: configStatus.enumValues, description: 'INACTIVE turns off every service in the group' })
+  @IsOptional()
+  @IsIn(configStatus.enumValues)
+  status?: (typeof configStatus.enumValues)[number];
+}
 
 export class CreateServiceDto {
-  @ApiProperty({ example: 'EDC_BILL' })
-  @Matches(/^[A-Z0-9_]{2,40}$/)
-  serviceCode: string;
+  @ApiProperty()
+  @IsUUID()
+  serviceGroupId: string;
 
-  @ApiProperty({ example: 'Electricity bill' })
+  @ApiProperty({ example: 'EDC_BILL_USD' })
+  @Matches(CODE)
+  @Length(2, 50)
+  code: string;
+
+  @ApiProperty({ example: 'Electricity bill (USD)' })
   @IsString()
-  @Length(1, 200)
-  serviceName: string;
+  @Length(1, 140)
+  name: string;
+
+  @ApiProperty({ enum: CURRENCIES, description: 'One currency per service' })
+  @IsIn(CURRENCIES)
+  currency: (typeof CURRENCIES)[number];
 }
 
 export class UpdateServiceDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @Length(1, 200)
-  serviceName?: string;
+  @Length(1, 140)
+  name?: string;
 
-  @ApiPropertyOptional({ enum: SERVICE_STATUSES })
+  @ApiPropertyOptional({ enum: configStatus.enumValues })
   @IsOptional()
-  @IsIn(SERVICE_STATUSES)
-  status?: (typeof SERVICE_STATUSES)[number];
-}
-
-export class MovementEntryDto {
-  @ApiProperty({ example: 1 })
-  @IsInt()
-  @Min(1)
-  entryNo: number;
-
-  @ApiProperty({ enum: ENTRY_SIDES })
-  @IsIn(ENTRY_SIDES)
-  side: (typeof ENTRY_SIDES)[number];
-
-  @ApiProperty({
-    example: '{source}',
-    description: `${PARTY_ACCOUNTS.join(', ')}, or a specific account path such as platform:fees:{service} (currency is appended)`,
-  })
-  @IsString()
-  @Length(1, 120)
-  account: string;
-
-  @ApiProperty({ enum: AMOUNT_TYPES })
-  @IsIn(AMOUNT_TYPES)
-  amountType: (typeof AMOUNT_TYPES)[number];
-
-  @ApiPropertyOptional({ default: false, description: 'Specific accounts only: may go negative' })
-  @IsOptional()
-  @IsBoolean()
-  allowOverdraft?: boolean;
-}
-
-export class MovementDto {
-  @ApiProperty({ type: [MovementEntryDto] })
-  @ValidateNested({ each: true })
-  @Type(() => MovementEntryDto)
-  @ArrayMinSize(2)
-  @ArrayMaxSize(40)
-  entries: MovementEntryDto[];
+  @IsIn(configStatus.enumValues)
+  status?: (typeof configStatus.enumValues)[number];
 }
 
 export class UpsertCommandDto {
-  @ApiPropertyOptional({ enum: COMMAND_STATUSES, default: 'active' })
+  @ApiPropertyOptional({ enum: configStatus.enumValues, default: 'ACTIVE' })
   @IsOptional()
-  @IsIn(COMMAND_STATUSES)
-  status?: (typeof COMMAND_STATUSES)[number];
+  @IsIn(configStatus.enumValues)
+  status?: (typeof configStatus.enumValues)[number];
+}
 
-  @ApiPropertyOptional({ default: false, description: 'Refund only: allow less than the original amount' })
-  @IsOptional()
-  @IsBoolean()
-  allowPartial?: boolean;
+export class InternalSpiConfigDto {
+  @ApiProperty({ example: 'sanctions-screening', description: 'Handler inside the payment engine' })
+  @IsString()
+  @Length(1, 140)
+  handlerName: string;
 
-  @ApiPropertyOptional({ description: 'Refund/cancel: latest minutes after the original payment' })
+  @ApiPropertyOptional({ default: 10_000 })
   @IsOptional()
   @IsInt()
   @Min(1)
-  maxAgeMinutes?: number;
-
-  @ApiPropertyOptional({ enum: PRICED_AMOUNT_TYPES, isArray: true, description: 'net_amount = amount + these …' })
-  @IsOptional()
-  @IsArray()
-  @IsIn(PRICED_AMOUNT_TYPES, { each: true })
-  netAmountAdd?: (typeof PRICED_AMOUNT_TYPES)[number][];
-
-  @ApiPropertyOptional({ enum: PRICED_AMOUNT_TYPES, isArray: true, description: '… − these' })
-  @IsOptional()
-  @IsArray()
-  @IsIn(PRICED_AMOUNT_TYPES, { each: true })
-  netAmountSubtract?: (typeof PRICED_AMOUNT_TYPES)[number][];
-
+  timeoutMs?: number;
 }
 
-export class CreatePricingTierDto {
-  @ApiProperty({ enum: PRICED_AMOUNT_TYPES })
-  @IsIn(PRICED_AMOUNT_TYPES)
-  amountType: (typeof PRICED_AMOUNT_TYPES)[number];
+export class ExternalSpiConfigDto {
+  @ApiProperty({ example: 'http://partner-mock:3000' })
+  @IsUrl({ require_tld: false, require_protocol: true })
+  baseUrl: string;
 
-  @ApiProperty({ enum: CURRENCIES })
-  @IsIn(CURRENCIES)
-  currency: (typeof CURRENCIES)[number];
+  @ApiProperty({ enum: spiProtocol.enumValues })
+  @IsIn(spiProtocol.enumValues)
+  protocol: (typeof spiProtocol.enumValues)[number];
 
-  @ApiProperty({ example: '1', description: 'Band on the request amount, smallest unit, inclusive' })
-  @Matches(DIGITS)
-  minAmount: string;
+  @ApiProperty({ enum: spiAuthType.enumValues })
+  @IsIn(spiAuthType.enumValues)
+  authType: (typeof spiAuthType.enumValues)[number];
 
-  @ApiPropertyOptional({ example: '10000', description: 'Inclusive; omit for no upper limit' })
+  @ApiPropertyOptional({ description: 'Name of the secret (env var / vault key); never the secret itself' })
   @IsOptional()
-  @Matches(DIGITS)
-  maxAmount?: string;
+  @IsString()
+  @Length(1, 200)
+  credentialRef?: string;
 
-  @ApiProperty({ enum: CALC_TYPES })
-  @IsIn(CALC_TYPES)
-  calcType: (typeof CALC_TYPES)[number];
-
-  @ApiPropertyOptional({ enum: BASE_AMOUNT_TYPES, default: 'amount', description: 'What the percentage is taken of' })
+  @ApiPropertyOptional({ default: 30_000 })
   @IsOptional()
-  @IsIn(BASE_AMOUNT_TYPES)
-  baseAmountType?: (typeof BASE_AMOUNT_TYPES)[number];
+  @IsInt()
+  @Min(1)
+  timeoutMs?: number;
 
-  @ApiPropertyOptional({ default: false, description: 'Add the base itself: value = base + fixed + base × %' })
-  @IsOptional()
-  @IsBoolean()
-  includeBase?: boolean;
-
-  @ApiPropertyOptional({ example: '25' })
-  @IsOptional()
-  @Matches(DIGITS)
-  fixedAmount?: string;
-
-  @ApiPropertyOptional({ example: 25, description: 'Basis points, 25 = 0.25%' })
+  @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(10_000)
-  percentBps?: number;
+  @Max(10)
+  maxRetries?: number;
+}
+
+export class CreateSpiDto {
+  @ApiProperty({ example: 'EDC_BILLER' })
+  @Matches(CODE)
+  @Length(2, 50)
+  code: string;
+
+  @ApiProperty({ example: 'EDC biller API' })
+  @IsString()
+  @Length(1, 140)
+  name: string;
+
+  @ApiProperty({ enum: spiType.enumValues })
+  @IsIn(spiType.enumValues)
+  spiType: (typeof spiType.enumValues)[number];
+
+  @ApiPropertyOptional({ type: InternalSpiConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => InternalSpiConfigDto)
+  internal?: InternalSpiConfigDto;
+
+  @ApiPropertyOptional({ type: ExternalSpiConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExternalSpiConfigDto)
+  external?: ExternalSpiConfigDto;
+}
+
+export class StatusDto {
+  @ApiProperty({ enum: configStatus.enumValues })
+  @IsIn(configStatus.enumValues)
+  status: (typeof configStatus.enumValues)[number];
+}
+
+export class AddCommandSpiDto {
+  @ApiProperty({ example: 'EDC_BILLER' })
+  @Matches(CODE)
+  spiCode: string;
+
+  @ApiProperty({ enum: spiTrigger.enumValues })
+  @IsIn(spiTrigger.enumValues)
+  triggerStage: (typeof spiTrigger.enumValues)[number];
+
+  @ApiProperty({ example: 1, description: 'Order within the stage' })
+  @IsInt()
+  @Min(1)
+  executionSequence: number;
+
+  @ApiProperty({ example: 'POST /confirmations', description: "External: 'METHOD /path'; internal: free text passed to the handler" })
+  @IsString()
+  @Length(1, 200)
+  spiOperation: string;
+}
+
+export class TierRuleDto {
+  @ApiProperty({ example: 'FEE_FROM_CUSTOMER' })
+  @Matches(CODE)
+  amountType: string;
+
+  @ApiProperty({ example: 1 })
+  @IsInt()
+  @Min(1)
+  calcSequence: number;
+
+  @ApiProperty({ enum: calcMethod.enumValues })
+  @IsIn(calcMethod.enumValues)
+  calcMethod: (typeof calcMethod.enumValues)[number];
+
+  @ApiPropertyOptional({ example: 'AMOUNT', description: 'FIXED: what the percentage is taken of' })
+  @IsOptional()
+  @Matches(CODE)
+  baseAmountType?: string;
+
+  @ApiPropertyOptional({ example: '0.50' })
+  @IsOptional()
+  @Matches(DECIMAL2)
+  fixedValue?: string;
+
+  @ApiPropertyOptional({ example: '5', description: '5 = 5%' })
+  @IsOptional()
+  @Matches(DECIMAL6)
+  percentage?: string;
+
+  @ApiPropertyOptional({ example: 'FEE_FROM_CUSTOMER + AMOUNT' })
+  @IsOptional()
+  @Matches(/^[A-Z0-9_ .+\-*/()]+$/)
+  @Length(1, 500)
+  formulaExpression?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Matches(DIGITS)
+  @Matches(DECIMAL2)
   minValue?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Matches(DIGITS)
+  @Matches(DECIMAL2)
   maxValue?: string;
-
-  @ApiPropertyOptional({ description: 'Defaults to now' })
-  @IsOptional()
-  @IsDateString()
-  effectiveFrom?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsDateString()
-  effectiveTo?: string;
 }
 
-export class RetirePricingTierDto {
-  @ApiProperty({ description: 'When the tier stops applying' })
-  @IsDateString()
-  effectiveTo: string;
+export class TierMovementDto {
+  @ApiProperty({ example: 1, description: 'Posting order' })
+  @IsInt()
+  @Min(1)
+  movementSequence: number;
+
+  @ApiProperty({ example: 'AMOUNT' })
+  @Matches(CODE)
+  amountType: string;
+
+  @ApiProperty({ enum: stockRole.enumValues })
+  @IsIn(stockRole.enumValues)
+  fromStockRole: (typeof stockRole.enumValues)[number];
+
+  @ApiPropertyOptional({ description: 'Required when fromStockRole is SPECIFIC' })
+  @IsOptional()
+  @IsUUID()
+  fromStockId?: string;
+
+  @ApiProperty({ enum: stockRole.enumValues })
+  @IsIn(stockRole.enumValues)
+  toStockRole: (typeof stockRole.enumValues)[number];
+
+  @ApiPropertyOptional({ description: 'Required when toStockRole is SPECIFIC' })
+  @IsOptional()
+  @IsUUID()
+  toStockId?: string;
+}
+
+export class CreateTierDto {
+  @ApiPropertyOptional({ example: '0.01', description: 'Inclusive; omit for no lower limit' })
+  @IsOptional()
+  @Matches(DECIMAL2)
+  minAmount?: string;
+
+  @ApiPropertyOptional({ example: '40.01', description: 'Exclusive; omit for no upper limit' })
+  @IsOptional()
+  @Matches(DECIMAL2)
+  maxAmount?: string;
+
+  @ApiProperty({ type: [TierRuleDto] })
+  @ValidateNested({ each: true })
+  @Type(() => TierRuleDto)
+  @ArrayMaxSize(30)
+  rules: TierRuleDto[];
+
+  @ApiProperty({ type: [TierMovementDto] })
+  @ValidateNested({ each: true })
+  @Type(() => TierMovementDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(30)
+  movements: TierMovementDto[];
+}
+
+export class PreviewTierDto {
+  @ApiProperty({ example: '20.00' })
+  @Matches(DECIMAL2)
+  amount: string;
 }
 
 export class CommandParams {
-  @ApiProperty({ example: 'EDC_BILL' })
-  @Matches(/^[A-Z0-9_]{2,40}$/)
+  @ApiProperty({ example: 'EDC_BILL_USD' })
+  @Matches(CODE)
   code: string;
 
-  @ApiProperty({ enum: COMMANDS })
-  @IsIn(COMMANDS)
-  command: (typeof COMMANDS)[number];
+  @ApiProperty({ enum: commandType.enumValues })
+  @IsIn(commandType.enumValues)
+  commandType: (typeof commandType.enumValues)[number];
 }

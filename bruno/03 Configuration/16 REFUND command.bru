@@ -1,0 +1,21 @@
+meta {
+  name: REFUND command
+  type: http
+  seq: 16
+}
+
+put {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/REFUND
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

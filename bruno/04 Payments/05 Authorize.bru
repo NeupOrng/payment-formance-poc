@@ -1,0 +1,35 @@
+meta {
+  name: Authorize
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{orderId}}/authorize
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "by": "customer:bruno"
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("COMPLETED", function () {
+    expect(res.body.status).to.equal("COMPLETED");
+  });
+
+  test("history PENDING → PROCESSING → COMPLETED", function () {
+    expect(res.body.history.map((h) => h.toStatus)).to.eql(["PENDING", "PROCESSING", "COMPLETED"]);
+  });
+
+  test("who authorized is recorded", function () {
+    expect(res.body.history[1].changedBy).to.equal("customer:bruno");
+  });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: ACTIVE after KYC
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{profileUrl}}/profiles/{{noKycId}}/status
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "ACTIVE"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("ACTIVE", function () {
+    expect(res.body.status).to.equal("ACTIVE");
+  });
+}

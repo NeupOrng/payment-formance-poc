@@ -2,7 +2,12 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import http from 'node:http';
 import https from 'node:https';
-import type { LedgerRequest } from '../db/schema.js';
+
+export type LedgerRequest = {
+  script: { plain: string; vars: Record<string, string> };
+  reference: string;
+  metadata: Record<string, string>;
+};
 
 export class LedgerError extends Error {
   constructor(
@@ -90,6 +95,21 @@ export class LedgerClient implements OnModuleInit {
     };
   }
 
+  /**
+   * Reverts a posted transaction with a new opposite transaction (append-only). Not forced: if the
+   * money has already left an account, Formance refuses and the caller must handle it.
+   */
+  async revertTransaction(id: number): Promise<{ id: number | null }> {
+    try {
+      const res = await this.request<{ data: { id: number } }>('POST', `/v2/${this.ledger}/transactions/${id}/revert`, {});
+      return { id: res.data.id };
+    } catch (err) {
+      // Reverted by an earlier attempt whose response was lost.
+      if (err instanceof LedgerError && err.code === 'ALREADY_REVERT') return { id: null };
+      throw err;
+    }
+  }
+
   async findTransactionByReference(reference: string): Promise<{ id: number } | null> {
     // The v2 list endpoint takes its filter as a JSON body on GET, which fetch() does not allow.
     const res = await this.request<{ cursor: { data: { id: number }[] } }>(
@@ -99,6 +119,14 @@ export class LedgerClient implements OnModuleInit {
     );
     const tx = res.cursor.data[0];
     return tx ? { id: tx.id } : null;
+  }
+
+  /** Sum of balances of all accounts under an address prefix, e.g. every hold of one stock. */
+  async aggregateBalance(prefix: string, asset: string): Promise<bigint> {
+    const res = await this.request<{ data: Record<string, number> }>('GET', `/v2/${this.ledger}/aggregate/balances`, {
+      $match: { address: prefix },
+    });
+    return BigInt(res.data?.[asset] ?? 0);
   }
 
   async getVolumes(address: string): Promise<Volumes> {

@@ -1,0 +1,31 @@
+meta {
+  name: Add bank Settlement account
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{profileUrl}}/profiles/{{bankId}}/accounts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "productType": "INTERNAL",
+    "name": "Settlement",
+    "currencies": [
+      "USD"
+    ]
+  }
+}
+
+script:post-response {
+  bru.setVar("settlementStock", res.body.accounts.find((a) => a.name === "Settlement").stocks[0].id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

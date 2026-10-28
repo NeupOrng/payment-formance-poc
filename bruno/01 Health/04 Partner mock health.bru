@@ -1,0 +1,17 @@
+meta {
+  name: Partner mock health
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{partnerUrl}}/health
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

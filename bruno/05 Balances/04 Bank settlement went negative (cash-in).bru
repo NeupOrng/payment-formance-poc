@@ -1,0 +1,21 @@
+meta {
+  name: Bank settlement went negative (cash-in)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{paymentUrl}}/stocks/{{settlementStock}}/ledger-balance
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("−100.00", function () {
+    expect(res.body.ledgerBalance).to.equal("-100.00");
+  });
+}

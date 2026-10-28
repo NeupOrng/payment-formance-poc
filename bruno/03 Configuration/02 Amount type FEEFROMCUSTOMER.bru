@@ -1,0 +1,24 @@
+meta {
+  name: Amount type FEE_FROM_CUSTOMER
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{paymentUrl}}/amount-types
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "FEE_FROM_CUSTOMER",
+    "name": "Fee from customer"
+  }
+}
+
+tests {
+  test("status is 201 or 409", function () {
+    expect([201, 409]).to.include(res.status);
+  });
+}

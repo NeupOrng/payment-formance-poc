@@ -1,0 +1,25 @@
+meta {
+  name: Ledger transactions
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{paymentUrl}}/payments/{{orderId}}/ledger
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("RESERVE and SETTLE posted", function () {
+    expect(res.body.filter((t) => t.status === "POSTED").map((t) => t.step)).to.eql(["RESERVE", "SETTLE"]);
+  });
+
+  test("settle postings carry amount types", function () {
+    expect(res.body.find((t) => t.step === "SETTLE").postings.map((p) => p.amountType)).to.eql(["AMOUNT", "FEE_FROM_CUSTOMER"]);
+  });
+}

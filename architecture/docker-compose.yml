@@ -2,9 +2,10 @@ name: mobilebank
 
 volumes:
   postgres-data: {}
-  customer-node-modules: {}
+  profile-node-modules: {}
   payment-node-modules: {}
   client-node-modules: {}
+  temporal-data: {}
 
 services:
   postgres:
@@ -14,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run `task env` to create architecture/.env}
       # Passed to postgres/init.sh, which creates one role + database per service on first start.
       LEDGER_DB_PASSWORD: ${LEDGER_DB_PASSWORD:?run `task env`}
-      CUSTOMER_DB_PASSWORD: ${CUSTOMER_DB_PASSWORD:?run `task env`}
+      PROFILE_DB_PASSWORD: ${PROFILE_DB_PASSWORD:?run `task env`}
       PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?run `task env`}
     command: ["-c", "max_connections=200"]
     ports:
@@ -42,6 +43,10 @@ services:
       POSTGRES_MAX_IDLE_CONNS: "40"
       AUTO_UPGRADE: "true"
       EXPERIMENTAL_FEATURES: "true"
+      # Every committed / reverted transaction is POSTed to the profile service, which mirrors
+      # stock balances (ledger_balance, hold_amount) from the ledger.
+      PUBLISHER_HTTP_ENABLED: "true"
+      PUBLISHER_TOPIC_MAPPING: "*:http://profile-service:3000/ledger-events"
       BIND: ":3068"
     # The image has no HTTP client for a healthcheck; the payment service retries until the ledger answers.
 
@@ -54,21 +59,41 @@ services:
     environment:
       POSTGRES_URI: postgresql://ledger:${LEDGER_DB_PASSWORD}@postgres:5432/ledger?sslmode=disable
 
-  customer-service:
+  # Temporal dev server (SQLite persisted in a volume) with its web UI on :8233.
+  temporal:
+    image: temporalio/temporal:${TEMPORAL_CLI_VERSION:-1.9.1}
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/home/temporal/temporal.db"]
+    ports:
+      - "${TEMPORAL_PORT:-7233}:7233"
+      - "${TEMPORAL_UI_PORT:-8233}:8233"
+    volumes:
+      - temporal-data:/home/temporal
+
+  # Mock biller that confirms (or rejects) payments in the saga's partner step.
+  partner-mock:
+    build: ../partner-mock
+    ports:
+      - "${PARTNER_PORT:-4003}:3000"
+    volumes:
+      - ../partner-mock/server.mjs:/app/server.mjs:ro
+
+  profile-service:
     build:
-      context: ../customer
+      context: ../profile
       target: dev
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "${CUSTOMER_PORT:-4001}:3000"
+      - "${PROFILE_PORT:-4001}:3000"
     environment:
       PORT: "3000"
-      DATABASE_URL: postgresql://customer_svc:${CUSTOMER_DB_PASSWORD}@postgres:5432/customer
+      DATABASE_URL: postgresql://profile_svc:${PROFILE_DB_PASSWORD}@postgres:5432/profile
+      LEDGER_URL: http://ledger:3068
+      LEDGER_NAME: mobilebank
     volumes:
-      - ../customer:/app
-      - customer-node-modules:/app/node_modules
+      - ../profile:/app
+      - profile-node-modules:/app/node_modules
 
   payment-service:
     build:
@@ -79,17 +104,23 @@ services:
         condition: service_healthy
       ledger:
         condition: service_started
-      customer-service:
+      profile-service:
+        condition: service_started
+      temporal:
+        condition: service_started
+      partner-mock:
         condition: service_started
     ports:
       - "${PAYMENT_PORT:-4002}:3000"
     environment:
       PORT: "3000"
       DATABASE_URL: postgresql://payment_svc:${PAYMENT_DB_PASSWORD}@postgres:5432/payment
-      CUSTOMER_SERVICE_URL: http://customer-service:3000
+      PROFILE_SERVICE_URL: http://profile-service:3000
       LEDGER_URL: http://ledger:3068
       LEDGER_NAME: mobilebank
-      OUTBOX_INTERVAL_MS: "2000"
+      TEMPORAL_ADDRESS: temporal:7233
+      SAGA_WAIT_MS: "5000"
+      AUTH_TIMEOUT_SECONDS: "300"
     volumes:
       - ../payment:/app
       - payment-node-modules:/app/node_modules
@@ -99,12 +130,12 @@ services:
       context: ../client
       target: dev
     depends_on:
-      - customer-service
+      - profile-service
       - payment-service
     ports:
       - "${CLIENT_PORT:-4000}:3000"
     environment:
-      NUXT_CUSTOMER_SERVICE_URL: http://customer-service:3000
+      NUXT_PROFILE_SERVICE_URL: http://profile-service:3000
       NUXT_PAYMENT_SERVICE_URL: http://payment-service:3000
     volumes:
       - ../client:/app

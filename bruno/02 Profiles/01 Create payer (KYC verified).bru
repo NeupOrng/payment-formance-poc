@@ -1,0 +1,51 @@
+meta {
+  name: Create payer (KYC verified)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{profileUrl}}/profiles
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "profileType": "INDIVIDUAL",
+    "fullName": "Bruno Payer",
+    "phoneNumber": "{{payerPhone}}",
+    "kycVerified": true
+  }
+}
+
+script:pre-request {
+  bru.setVar("payerPhone", "+8551" + Math.floor(10000000 + Math.random() * 89999999));
+}
+
+script:post-response {
+  bru.setVar("payerId", res.body.id);
+  bru.setVar("payerStock", res.body.accounts.flatMap((a) => a.stocks).find((s) => s.currency === "USD").id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("ACTIVE", function () {
+    expect(res.body.status).to.equal("ACTIVE");
+  });
+
+  test("CURRENT account with USD + KHR stocks", function () {
+    expect(res.body.accounts[0].productType).to.equal("CURRENT"); expect(res.body.accounts[0].stocks.map((s) => s.currency).sort()).to.eql(["KHR", "USD"]);
+  });
+
+  test("ledger account uses ids only", function () {
+    expect(res.body.accounts[0].stocks[0].ledgerAccount).to.match(/^individual:cif\d+:current:\d+$/);
+  });
+}
+
+docs {
+  INDIVIDUAL profiles get a CURRENT account; each stock is one currency.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: CURRENT account for an INTERNAL profile is rejected
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{profileUrl}}/profiles/{{bankId}}/accounts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "productType": "CURRENT",
+    "currencies": [
+      "USD"
+    ]
+  }
+}
+
+tests {
+  test("status is 422", function () {
+    expect(res.status).to.equal(422);
+  });
+}

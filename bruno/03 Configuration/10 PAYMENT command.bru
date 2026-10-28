@@ -1,0 +1,25 @@
+meta {
+  name: PAYMENT command
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/PAYMENT
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("ACTIVE", function () {
+    expect(res.body.status).to.equal("ACTIVE");
+  });
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Get service configuration
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{paymentUrl}}/services/{{serviceCode}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("three commands", function () {
+    expect(res.body.commands.map((c) => c.commandType).sort()).to.eql(["CANCEL", "PAYMENT", "REFUND"]);
+  });
+
+  test("payment has its SPI and tier", function () {
+    const p = res.body.commands.find((c) => c.commandType === "PAYMENT"); expect(p.spis).to.have.length(1); expect(p.tiers).to.have.length(1);
+  });
+}

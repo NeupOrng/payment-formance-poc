@@ -1,0 +1,26 @@
+meta {
+  name: List profiles
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{profileUrl}}/profiles?type=INDIVIDUAL&limit=50
+  body: none
+  auth: none
+}
+
+params:query {
+  type: INDIVIDUAL
+  limit: 50
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("only individuals", function () {
+    expect(res.body.every((p) => p.profileType === "INDIVIDUAL")).to.equal(true);
+  });
+}

@@ -1,0 +1,26 @@
+meta {
+  name: Create cash-in service
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{paymentUrl}}/services
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "serviceGroupId": "{{groupId}}",
+    "code": "{{cashCode}}",
+    "name": "Bruno cash-in",
+    "currency": "USD"
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

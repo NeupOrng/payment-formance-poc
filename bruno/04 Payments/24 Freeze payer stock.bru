@@ -1,0 +1,23 @@
+meta {
+  name: Freeze payer stock
+  type: http
+  seq: 24
+}
+
+patch {
+  url: {{profileUrl}}/stocks/{{payerStock}}/status
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "FROZEN"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

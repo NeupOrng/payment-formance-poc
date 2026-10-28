@@ -1,0 +1,34 @@
+meta {
+  name: Create $5 to cancel before authorization
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "{{serviceCode}}",
+    "amount": "5.00",
+    "payerStockId": "{{payerStock}}",
+    "payeeStockId": "{{payeeStock}}"
+  }
+}
+
+script:post-response {
+  bru.setVar("pendingId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

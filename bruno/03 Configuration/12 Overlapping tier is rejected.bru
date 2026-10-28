@@ -1,0 +1,33 @@
+meta {
+  name: Overlapping tier is rejected
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/PAYMENT/tiers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "minAmount": "10.00",
+    "maxAmount": "20.00",
+    "rules": [],
+    "movements": [
+      {
+        "movementSequence": 1,
+        "amountType": "AMOUNT",
+        "fromStockRole": "PAYER",
+        "toStockRole": "PAYEE"
+      }
+    ]
+  }
+}
+
+tests {
+  test("status is 409", function () {
+    expect(res.status).to.equal(409);
+  });
+}

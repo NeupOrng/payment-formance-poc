@@ -1,163 +1,156 @@
-import type { AmountType, EntrySide, PlannedPosting } from '../db/schema.js';
-import { computeAmounts, type AmountValues, type NetAmountFormula, type PricingRule } from '../pricing/pricing.js';
+import { toDecimal, toMinor } from '../common/money.js';
+import type { LedgerStep, PlannedPosting, StockRole } from '../db/schema.js';
 
-export type MovementEntry = {
-  entryNo: number;
-  side: EntrySide;
-  account: string;
-  amountType: AmountType;
-  allowOverdraft: boolean;
+export type MovementConfig = {
+  movementSequence: number;
+  amountType: string;
+  fromStockRole: StockRole;
+  fromStockId: string | null;
+  toStockRole: StockRole;
+  toStockId: string | null;
 };
 
-/** Σ debits and Σ credits of a movement for one set of calculated values. */
-export function totals(entries: MovementEntry[], values: AmountValues) {
-  let debit = 0n;
-  let credit = 0n;
-  for (const e of entries) {
-    if (e.side === 'debit') debit += values[e.amountType];
-    else credit += values[e.amountType];
-  }
-  return { debit, credit };
-}
+export type ResolvedMovement = {
+  movementSequence: number;
+  amountType: string;
+  amount: bigint; // minor units
+  fromStockId: string;
+  toStockId: string;
+};
 
-type Band = { minAmount: bigint; maxAmount: bigint | null };
-
-/**
- * The request amounts a command accepts in one currency: from its lowest band to its highest
- * (open-ended if any band is). No tiers → any amount.
- */
-export function amountRange(bands: Band[]): { min: bigint; max: bigint | null } | null {
-  if (!bands.length) return null;
-  const min = bands.reduce((m, b) => (b.minAmount < m ? b.minAmount : m), bands[0].minAmount);
-  const max = bands.some((b) => b.maxAmount === null)
-    ? null
-    : bands.reduce((m, b) => (b.maxAmount! > m ? b.maxAmount! : m), 0n);
-  return { min: min > 0n ? min : 1n, max };
-}
+/** What the engine needs to know about a stock to post (from the Profile Service). */
+export type StockInfo = {
+  id: string;
+  stockNumber: string;
+  ledgerAccount: string;
+  productType: string;
+};
 
 /**
- * Request amounts worth testing for one currency: each band's edges and middle, plus a spread
- * of round numbers. A movement that balances at all of them balances for the configured rules.
+ * Turns a tier's movement config into this order's stock-to-stock movements: PAYER / PAYEE become the
+ * order's stocks, SPECIFIC keeps the configured stock. Movements whose amount type came out 0 (or has
+ * no rule) are skipped — the schema only stores positive movements. Every movement balances itself
+ * (one amount from one stock to another), so the whole order always balances.
  */
-export function sampleAmounts(rules: Band[], max: bigint): bigint[] {
-  const points = new Set<bigint>([1n, 99n, 12_345n]);
-  for (let p = 1n; p <= max; p *= 10n) points.add(p);
-  for (const r of rules) {
-    const lo = r.minAmount > 0n ? r.minAmount : 1n;
-    points.add(lo);
-    if (lo > 1n) points.add(lo - 1n);
-    if (r.maxAmount !== null) {
-      points.add(r.maxAmount);
-      points.add(r.maxAmount + 1n);
-      points.add((lo + r.maxAmount) / 2n);
-    } else {
-      points.add(lo * 10n);
-    }
-  }
-  const range = amountRange(rules);
-  const lo = range?.min ?? 1n;
-  const hi = range?.max !== null && range?.max !== undefined && range.max < max ? range.max : max;
-  return [...points].filter((p) => p >= lo && p <= hi).sort((a, b) => (a < b ? -1 : 1));
+export function resolveMovements(
+  configs: MovementConfig[],
+  amounts: ReadonlyMap<string, bigint>,
+  parties: { payer: string; payee: string },
+): ResolvedMovement[] {
+  const pick = (role: StockRole, specific: string | null) =>
+    role === 'PAYER' ? parties.payer : role === 'PAYEE' ? parties.payee : specific!;
+  return [...configs]
+    .sort((a, b) => a.movementSequence - b.movementSequence)
+    .map((c) => ({
+      movementSequence: c.movementSequence,
+      amountType: c.amountType,
+      amount: amounts.get(c.amountType) ?? 0n,
+      fromStockId: pick(c.fromStockRole, c.fromStockId),
+      toStockId: pick(c.toStockRole, c.toStockId),
+    }))
+    .filter((m) => {
+      if (m.amount > 0n && m.fromStockId === m.toStockId) {
+        throw new Error(`movement ${m.movementSequence} would move ${m.amountType} from a stock to itself`);
+      }
+      return m.amount > 0n;
+    });
 }
 
-export type BalanceProblem = { amount: string; debit: string; credit: string };
+export type PlannedLedgerTx = { step: LedgerStep; postings: PlannedPosting[]; numscript: string | null };
+
+/** Hold accounts are per stock and order, so a stock's hold_amount is the sum under `holds:{stockNumber}:`. */
+export const holdAccount = (stockNumber: string, orderId: string) => `holds:${stockNumber}:${orderId}`;
 
 /**
- * Checks that a movement balances (Σ debits = Σ credits) for every sampled request amount within
- * the command's amount range, using the pricing rules of one currency. Returns the amounts where
- * it does not.
+ * Plans the Formance transactions of an order's saga.
+ *
+ * - RESERVE: money leaving the customer-facing stocks (payer / payee, unless they are INTERNAL bank
+ *   accounts) moves into per-order hold accounts, so it can't be spent twice while the order waits for
+ *   authorization or SPIs.
+ * - SETTLE: the movements, in sequence, paid from those holds. INTERNAL (bank) stocks may go negative
+ *   (e.g. the settlement / nostro account on cash-in), customer and agent stocks never.
+ * - RELEASE: compensation for RESERVE — the holds go back.
+ * - REVERT: compensation for SETTLE, posted with Formance's revert (no script); planned postings are
+ *   the mirror of SETTLE for display.
  */
-export function checkBalance(
-  entries: MovementEntry[],
-  rules: (PricingRule & { minAmount: bigint; maxAmount: bigint | null })[],
-  formula: NetAmountFormula,
-  max: bigint,
-): BalanceProblem[] {
-  const problems: BalanceProblem[] = [];
-  for (const amount of sampleAmounts(rules, max)) {
-    const applicable = rules.filter(
-      (r) => r.minAmount <= amount && (r.maxAmount === null || amount <= r.maxAmount),
-    );
-    const { values } = computeAmounts(amount, applicable, formula);
-    const { debit, credit } = totals(entries, values);
-    if (debit !== credit) {
-      problems.push({ amount: amount.toString(), debit: debit.toString(), credit: credit.toString() });
-    }
+export function planLedger(
+  movements: ResolvedMovement[],
+  stocks: ReadonlyMap<string, StockInfo>,
+  heldStockIds: ReadonlySet<string>,
+  orderId: string,
+  asset: string,
+): PlannedLedgerTx[] {
+  const info = (id: string) => {
+    const s = stocks.get(id);
+    if (!s) throw new Error(`unknown stock ${id}`);
+    return s;
+  };
+
+  const reserved = new Map<string, bigint>();
+  for (const m of movements) {
+    if (heldStockIds.has(m.fromStockId)) reserved.set(m.fromStockId, (reserved.get(m.fromStockId) ?? 0n) + m.amount);
   }
-  return problems;
+
+  const reserve: PlannedPosting[] = [...reserved].map(([stockId, amount]) => ({
+    source: info(stockId).ledgerAccount,
+    destination: holdAccount(info(stockId).stockNumber, orderId),
+    amount: toDecimal(amount),
+    fromStockId: stockId,
+    toStockId: null,
+    amountType: null,
+    movementSequence: null,
+  }));
+
+  const settle: PlannedPosting[] = movements.map((m) => {
+    const from = info(m.fromStockId);
+    const held = heldStockIds.has(m.fromStockId);
+    return {
+      source: held ? holdAccount(from.stockNumber, orderId) : from.ledgerAccount,
+      destination: info(m.toStockId).ledgerAccount,
+      amount: toDecimal(m.amount),
+      fromStockId: m.fromStockId,
+      toStockId: m.toStockId,
+      amountType: m.amountType,
+      movementSequence: m.movementSequence,
+      overdraft: !held && from.productType === 'INTERNAL',
+    };
+  });
+
+  const release: PlannedPosting[] = reserve.map((r) => ({
+    ...r,
+    source: r.destination,
+    destination: r.source,
+    fromStockId: null,
+    toStockId: r.fromStockId,
+  }));
+
+  const revert: PlannedPosting[] = [...settle].reverse().map((p) => ({
+    ...p,
+    source: p.destination,
+    destination: p.source,
+    fromStockId: p.toStockId,
+    toStockId: p.fromStockId,
+    overdraft: false,
+  }));
+
+  const tx = (step: LedgerStep, postings: PlannedPosting[], script = true): PlannedLedgerTx => ({
+    step,
+    postings,
+    numscript: script ? toNumscript(postings, asset) : null,
+  });
+  return [
+    ...(reserve.length ? [tx('RESERVE', reserve), tx('RELEASE', release)] : []),
+    tx('SETTLE', settle),
+    tx('REVERT', revert, false),
+  ];
 }
 
-type Resolved = { address: string; amountType: AmountType; value: bigint; overdraft: boolean };
-
-/**
- * Pairs debits with credits, in entry order, into source → destination postings.
- * Example: debit payer 105 (selling price); credit payee 100 (amount), credit fee account 5 (fee)
- *   → payer → payee 100, payer → fee account 5.
- * A debit and a credit of the same account cancel out and produce no posting.
- */
-export function planPostings(
-  entries: MovementEntry[],
-  values: AmountValues,
-  resolve: (account: string) => string,
-): { postings: (PlannedPosting & { overdraft: boolean })[]; effects: Map<string, bigint> } {
-  const effects = new Map<string, bigint>();
-  const debits: Resolved[] = [];
-  const credits: Resolved[] = [];
-
-  for (const e of [...entries].sort((a, b) => a.entryNo - b.entryNo)) {
-    const value = values[e.amountType];
-    if (value === 0n) continue;
-    if (value < 0n) throw new Error(`${e.amountType} is negative`);
-    const r = { address: resolve(e.account), amountType: e.amountType, value, overdraft: e.allowOverdraft };
-    (e.side === 'debit' ? debits : credits).push(r);
-    effects.set(e.account, (effects.get(e.account) ?? 0n) + (e.side === 'credit' ? value : -value));
-  }
-
-  const debitTotal = debits.reduce((s, d) => s + d.value, 0n);
-  const creditTotal = credits.reduce((s, c) => s + c.value, 0n);
-  if (debitTotal !== creditTotal) {
-    throw new Error(`movement is not balanced: debits ${debitTotal} ≠ credits ${creditTotal}`);
-  }
-  if (debitTotal === 0n) throw new Error('movement moves nothing');
-
-  const postings: (PlannedPosting & { overdraft: boolean })[] = [];
-  let d = 0;
-  let c = 0;
-  let debitLeft = debits[0]?.value ?? 0n;
-  let creditLeft = credits[0]?.value ?? 0n;
-  while (d < debits.length && c < credits.length) {
-    const amount = debitLeft < creditLeft ? debitLeft : creditLeft;
-    const from = debits[d];
-    const to = credits[c];
-    if (from.address !== to.address) {
-      postings.push({
-        source: from.address,
-        destination: to.address,
-        amount: amount.toString(),
-        debitType: from.amountType,
-        creditType: to.amountType,
-        overdraft: from.overdraft,
-      });
-    }
-    debitLeft -= amount;
-    creditLeft -= amount;
-    if (debitLeft === 0n && ++d < debits.length) debitLeft = debits[d].value;
-    if (creditLeft === 0n && ++c < credits.length) creditLeft = credits[c].value;
-  }
-  return { postings, effects };
-}
-
-/** One Numscript `send` per planned posting, so ledger posting N = planned posting N. */
-export function toNumscript(postings: (PlannedPosting & { overdraft: boolean })[], asset: string): string {
+/** One Numscript `send` per posting, so ledger posting N = planned posting N. */
+export function toNumscript(postings: PlannedPosting[], asset: string): string {
   return postings
     .map(
       (p) =>
-        `send [${asset} ${p.amount}] (\n  source = @${p.source}${p.overdraft ? ' allowing unbounded overdraft' : ''}\n  destination = @${p.destination}\n)\n`,
+        `send [${asset} ${toMinor(p.amount)}] (\n  source = @${p.source}${p.overdraft ? ' allowing unbounded overdraft' : ''}\n  destination = @${p.destination}\n)\n`,
     )
     .join('');
-}
-
-/** Replaces `{service}` and appends the currency to a specific account path. */
-export function accountAddress(path: string, serviceCode: string, currency: string) {
-  return `${path.replaceAll('{service}', serviceCode.toLowerCase())}:${currency.toLowerCase()}`;
 }

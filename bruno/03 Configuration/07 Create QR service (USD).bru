@@ -1,0 +1,35 @@
+meta {
+  name: Create QR service (USD)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{paymentUrl}}/services
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "serviceGroupId": "{{groupId}}",
+    "code": "{{serviceCode}}",
+    "name": "Bruno QR",
+    "currency": "USD"
+  }
+}
+
+script:pre-request {
+  bru.setVar("serviceCode", "BRUNO_QR_" + Math.floor(100000 + Math.random() * 900000));
+  bru.setVar("cashCode", "BRUNO_CASH_" + Math.floor(100000 + Math.random() * 900000));
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("one currency per service", function () {
+    expect(res.body.currency).to.equal("USD");
+  });
+}

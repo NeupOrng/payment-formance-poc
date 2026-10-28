@@ -1,0 +1,26 @@
+meta {
+  name: List orders of the payer stock
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{paymentUrl}}/payments?stockId={{payerStock}}&commandType=PAYMENT
+  body: none
+  auth: none
+}
+
+params:query {
+  stockId: {{payerStock}}
+  commandType: PAYMENT
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("net effect on the stock", function () {
+    expect(res.body.find((o) => o.id === bru.getVar("orderId")).netForStock).to.equal("-21.00");
+  });
+}

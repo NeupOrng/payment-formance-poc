@@ -1,0 +1,23 @@
+meta {
+  name: Verify KYC
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{profileUrl}}/profiles/{{noKycId}}/kyc
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "kycVerified": true
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

@@ -1,100 +1,103 @@
-import { computeAmounts, ruleValue, type PricingRule } from './pricing.js';
+import { evaluate, frac, fromDecimal, parseFormula, toMinorRounded } from './expression.js';
+import { computeAmounts, validateRules, type AmountRule } from './pricing.js';
 
-const rule = (overrides: Partial<PricingRule>): PricingRule => ({
-  amountType: 'fee_from_customer',
-  calcType: 'fixed',
-  baseAmountType: 'amount',
-  includeBase: false,
-  fixedAmount: 0n,
-  percentBps: 0,
+const rule = (o: Partial<AmountRule> & Pick<AmountRule, 'amountType' | 'calcSequence'>): AmountRule => ({
+  calcMethod: 'FIXED',
+  baseAmountType: null,
+  fixedValue: null,
+  percentage: null,
+  formulaExpression: null,
   minValue: null,
   maxValue: null,
-  ...overrides,
+  ...o,
 });
-const noNet = { netAmountAdd: [], netAmountSubtract: [] };
 
-describe('ruleValue', () => {
-  it('charges a fixed value', () => {
-    expect(ruleValue(10_000n, rule({ fixedAmount: 25n }))).toBe(25n);
+describe('formula expressions', () => {
+  it('evaluates codes, numbers, precedence and parentheses exactly', () => {
+    const values = new Map([['AMOUNT', fromDecimal('20')], ['FEE', fromDecimal('1')]]);
+    expect(evaluate(parseFormula('FEE + AMOUNT'), values)).toEqual(frac(21n));
+    expect(evaluate(parseFormula('(AMOUNT - FEE) * 1.1'), values)).toEqual(fromDecimal('20.9'));
+    expect(evaluate(parseFormula('AMOUNT / 3'), values)).toEqual(frac(20n, 3n));
+    expect(evaluate(parseFormula('-FEE + 2'), values)).toEqual(frac(1n));
   });
 
-  it('rounds percentages half-up', () => {
-    const r = rule({ calcType: 'percent', percentBps: 25 });
-    expect(ruleValue(10_002n, r)).toBe(25n);
-    expect(ruleValue(10_200n, r)).toBe(26n);
+  it('rejects anything that is not codes, numbers or + - * / ( )', () => {
+    expect(() => parseFormula('AMOUNT + process.exit()')).toThrow();
+    expect(() => parseFormula('AMOUNT +')).toThrow(/ends unexpectedly/);
+    expect(() => parseFormula('(AMOUNT')).toThrow(/missing \)/);
   });
 
-  it('adds fixed and percent parts and clamps to min/max', () => {
-    expect(ruleValue(5_000n, rule({ calcType: 'fixed_plus_percent', fixedAmount: 10n, percentBps: 100 }))).toBe(60n);
-    const clamped = rule({ calcType: 'percent', percentBps: 25, minValue: 30n, maxValue: 500n });
-    expect(ruleValue(100n, clamped)).toBe(30n);
-    expect(ruleValue(1_000_000n, clamped)).toBe(500n);
-  });
-
-  it('adds the base itself when includeBase is set (selling price = amount + 5%)', () => {
-    const r = rule({ amountType: 'selling_price', calcType: 'percent', percentBps: 500, includeBase: true, maxValue: 100n });
-    expect(ruleValue(1_000n, r)).toBe(1_050n);
-    expect(ruleValue(4_000n, r)).toBe(4_100n); // only the added part is clamped
-  });
-
-  it('stays exact for very large amounts', () => {
-    expect(ruleValue(9_007_199_254_740_991n, rule({ calcType: 'percent', percentBps: 1 }))).toBe(900_719_925_474n);
+  it('rounds half up to 2 decimals', () => {
+    expect(toMinorRounded(fromDecimal('2.505'))).toBe(251n);
+    expect(toMinorRounded(fromDecimal('2.504'))).toBe(250n);
+    expect(toMinorRounded(frac(20n, 3n))).toBe(667n);
   });
 });
 
 describe('computeAmounts', () => {
-  it('sets amount, leaves unpriced types at 0', () => {
-    const { values } = computeAmounts(10_000n, [], noNet);
-    expect(values.amount).toBe(10_000n);
-    expect(values.vat).toBe(0n);
-    expect(values.net_amount).toBe(10_000n);
+  // The spec example: ≤ $40, FEE = 5% of AMOUNT, SELLING_PRICE = FEE + AMOUNT
+  const example = [
+    rule({ amountType: 'FEE_FROM_CUSTOMER', calcSequence: 1, baseAmountType: 'AMOUNT', percentage: '5' }),
+    rule({ amountType: 'SELLING_PRICE', calcSequence: 2, calcMethod: 'FORMULA', formulaExpression: 'FEE_FROM_CUSTOMER + AMOUNT' }),
+  ];
+
+  it('runs rules in calc_sequence order and uses earlier results', () => {
+    const v = computeAmounts(2_000n, [...example].reverse());
+    expect(v.get('FEE_FROM_CUSTOMER')).toBe(100n);
+    expect(v.get('SELLING_PRICE')).toBe(2_100n);
   });
 
-  it('computes rules based on another type after the ones based on amount', () => {
-    const { values, ruleIds } = computeAmounts(
-      10_000n,
-      [
-        rule({ id: 'vat-rule', amountType: 'vat', calcType: 'percent', percentBps: 1_000, baseAmountType: 'fee_from_customer' }),
-        rule({ id: 'fee-rule', amountType: 'fee_from_customer', fixedAmount: 25n }),
-      ],
-      noNet,
-    );
-    expect(values.fee_from_customer).toBe(25n);
-    expect(values.vat).toBe(3n); // 10% of 25 = 2.5 → 3
-    expect(ruleIds).toEqual({ fee_from_customer: 'fee-rule', vat: 'vat-rule' });
+  it('adds a fixed value to a percentage and clamps to min / max', () => {
+    const r = [rule({ amountType: 'FEE', calcSequence: 1, fixedValue: '0.10', baseAmountType: 'AMOUNT', percentage: '1', minValue: '0.25', maxValue: '5.00' })];
+    expect(computeAmounts(500n, r).get('FEE')).toBe(25n); // 0.10 + 0.05 → min 0.25
+    expect(computeAmounts(10_000n, r).get('FEE')).toBe(110n); // 0.10 + 1.00
+    expect(computeAmounts(10_000_000n, r).get('FEE')).toBe(500n); // capped
   });
 
-  it('derives net amount from the command formula', () => {
-    const { values } = computeAmounts(
-      10_000n,
-      [
-        rule({ amountType: 'platform_commission', calcType: 'percent', percentBps: 100 }),
-        rule({ amountType: 'cash_back', fixedAmount: 50n }),
-      ],
-      { netAmountAdd: ['cash_back'], netAmountSubtract: ['platform_commission'] },
-    );
-    expect(values.net_amount).toBe(10_000n - 100n + 50n);
+  it('later rules use the rounded value of earlier ones', () => {
+    const r = [
+      rule({ amountType: 'FEE', calcSequence: 1, baseAmountType: 'AMOUNT', percentage: '0.25' }),
+      rule({ amountType: 'VAT', calcSequence: 2, baseAmountType: 'FEE', percentage: '10' }),
+    ];
+    const v = computeAmounts(10_002n, r); // fee 25.005 cents → 25; VAT 10% of 0.25 = 2.5 → 3
+    expect(v.get('FEE')).toBe(25n);
+    expect(v.get('VAT')).toBe(3n);
   });
 
-  it('rejects a negative net amount', () => {
+  it('refuses a negative result', () => {
     expect(() =>
-      computeAmounts(100n, [rule({ amountType: 'discount', fixedAmount: 500n })], {
-        netAmountAdd: [],
-        netAmountSubtract: ['discount'],
-      }),
+      computeAmounts(100n, [rule({ amountType: 'NET_AMOUNT', calcSequence: 1, calcMethod: 'FORMULA', formulaExpression: 'AMOUNT - 5' })]),
     ).toThrow(/negative/);
   });
+});
 
-  it('rejects a base that is itself derived', () => {
-    expect(() =>
-      computeAmounts(
-        10_000n,
+describe('validateRules', () => {
+  const known = new Set(['AMOUNT', 'FEE', 'SELLING_PRICE', 'VAT']);
+
+  it('accepts rules that only use AMOUNT and earlier results', () => {
+    expect(
+      validateRules(
         [
-          rule({ amountType: 'vat', calcType: 'percent', percentBps: 1_000, baseAmountType: 'fee_from_customer' }),
-          rule({ amountType: 'fee_from_customer', calcType: 'percent', percentBps: 100, baseAmountType: 'selling_price' }),
+          rule({ amountType: 'FEE', calcSequence: 1, baseAmountType: 'AMOUNT', percentage: '5' }),
+          rule({ amountType: 'SELLING_PRICE', calcSequence: 2, calcMethod: 'FORMULA', formulaExpression: 'FEE + AMOUNT' }),
         ],
-        noNet,
+        known,
       ),
-    ).toThrow(/itself based/);
+    ).toEqual([]);
+  });
+
+  it('reports forward references, unknown types and bad formulas', () => {
+    const problems = validateRules(
+      [
+        rule({ amountType: 'SELLING_PRICE', calcSequence: 1, calcMethod: 'FORMULA', formulaExpression: 'FEE + AMOUNT' }),
+        rule({ amountType: 'FEE', calcSequence: 2, baseAmountType: 'AMOUNT', percentage: '5' }),
+        rule({ amountType: 'TIP', calcSequence: 3, fixedValue: '1' }),
+        rule({ amountType: 'VAT', calcSequence: 4, calcMethod: 'FORMULA', formulaExpression: 'FEE +' }),
+      ],
+      known,
+    );
+    expect(problems.join('\n')).toMatch(/uses FEE, which is not AMOUNT or calculated earlier/);
+    expect(problems.join('\n')).toMatch(/TIP.*unknown amount type/);
+    expect(problems.join('\n')).toMatch(/VAT.*ends unexpectedly/);
   });
 });

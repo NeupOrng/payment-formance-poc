@@ -1,0 +1,23 @@
+meta {
+  name: Unfreeze payer stock
+  type: http
+  seq: 26
+}
+
+patch {
+  url: {{profileUrl}}/stocks/{{payerStock}}/status
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "ACTIVE"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

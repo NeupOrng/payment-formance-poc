@@ -1,0 +1,28 @@
+meta {
+  name: Create service group
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{paymentUrl}}/service-groups
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Bruno group",
+    "description": "Created by the Bruno collection"
+  }
+}
+
+script:post-response {
+  bru.setVar("groupId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

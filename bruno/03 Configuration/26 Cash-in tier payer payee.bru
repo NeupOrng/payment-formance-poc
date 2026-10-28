@@ -1,0 +1,31 @@
+meta {
+  name: Cash-in tier: payer → payee
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{paymentUrl}}/services/{{cashCode}}/commands/PAYMENT/tiers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "rules": [],
+    "movements": [
+      {
+        "movementSequence": 1,
+        "amountType": "AMOUNT",
+        "fromStockRole": "PAYER",
+        "toStockRole": "PAYEE"
+      }
+    ]
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

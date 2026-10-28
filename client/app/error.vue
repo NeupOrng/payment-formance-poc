@@ -13,7 +13,7 @@ const props = defineProps<{ error: NuxtError }>()
       </CardHeader>
       <CardFooter>
         <Button @click="clearError({ redirect: '/' })">
-          Back to customers
+          Back to profiles
         </Button>
       </CardFooter>
     </Card>

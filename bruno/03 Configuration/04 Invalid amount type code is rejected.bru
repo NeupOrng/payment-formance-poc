@@ -1,0 +1,24 @@
+meta {
+  name: Invalid amount type code is rejected
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{paymentUrl}}/amount-types
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "not-valid",
+    "name": "x"
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+}

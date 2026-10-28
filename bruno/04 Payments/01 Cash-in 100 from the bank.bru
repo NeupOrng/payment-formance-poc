@@ -1,0 +1,46 @@
+meta {
+  name: Cash-in $100 from the bank
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "{{cashCode}}",
+    "amount": "100.00",
+    "payerStockId": "{{settlementStock}}",
+    "payeeStockId": "{{payerStock}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar("cashKey", bru.getVar("idempotencyKey"));
+}
+
+script:post-response {
+  bru.setVar("cashId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("COMPLETED without authorization (bank payer)", function () {
+    expect(res.body.status).to.equal("COMPLETED");
+  });
+}
+
+docs {
+  The bank settlement stock is INTERNAL: it may go negative and needs no customer authorization.
+}

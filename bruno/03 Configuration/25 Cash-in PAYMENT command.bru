@@ -1,0 +1,21 @@
+meta {
+  name: Cash-in PAYMENT command
+  type: http
+  seq: 25
+}
+
+put {
+  url: {{paymentUrl}}/services/{{cashCode}}/commands/PAYMENT
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

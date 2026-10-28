@@ -1,0 +1,21 @@
+meta {
+  name: Authorize it
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{secondId}}/authorize
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

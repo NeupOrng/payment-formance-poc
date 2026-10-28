@@ -1,299 +1,186 @@
 # Table schema design
 
-Postgres stores business intent, configuration and state; Formance stores money. No table holds a balance as the source of truth — balances are read from Formance.
+The schema follows the planned **Payment Engine & Profile Schema**. Postgres holds configuration, orders and their state; **Formance is the source of truth for money**. The Profile Service mirrors balances into its `stock` table.
 
-- **Customer service database:** `customers`, `accounts` (exactly two per customer: USD and KHR).
-- **Payment service database:** `services`, `service_commands`, `service_pricing_tiers`, `service_movement_entries`, `transfers`, `transfer_amounts`, `transfer_events`, `ledger_outbox`.
-- Links between the two services (e.g. a transfer's customers) are logical only; there are no cross-database foreign keys.
-- **Designed but not built yet:** `balance_snapshots` (cached balances), `processed_ledger_events`, and the reconciliation tables.
+- **Profile Service** (database `profile`): `profile`, `account_product`, `stock`.
+- **Payment Engine** (database `payment`):
+  - **Configuration:** `amount_type`, `service_group`, `service`, `service_command`, `spi`, `spi_internal_config`, `spi_external_config`, `service_command_spi`, `tier_config`, `tier_amount_rule`, `balance_movement_config`.
+  - **Transactions:** `payment_orders`, `payment_order_amount`, `payment_order_balance_movement`, `payment_order_status_history`, plus **`payment_order_ledger_tx`**, which was added for the saga.
+- References between the two services (`customer_id` → `profile`, every `*_stock_id` / `*_account_id` → `stock`) are logical, with no foreign keys.
+- Enums are Postgres enums, as in the plan. Amounts are `NUMERIC(20,2)` and travel through the APIs as decimal strings (`"21.00"`). The code computes in integer minor units (`bigint`) or exact fractions and never uses floats.
 
 ```mermaid
 erDiagram
-    customers ||--|{ accounts : "owns exactly 2 (USD, KHR)"
-    services ||--|{ service_commands : "has 2-3 (payment, refund, cancel)"
-    service_commands ||--o{ service_pricing_tiers : "prices amount types"
-    service_commands ||--|{ service_movement_entries : "moves money by (debit / credit)"
-    service_commands ||--o{ transfers : executes
-    transfers ||--|{ transfer_amounts : "calculated amounts"
-    service_pricing_tiers ||--o{ transfer_amounts : "value from"
-    transfers |o--o{ transfers : "refund or cancel of"
-    accounts ||--o{ transfers : "source / destination"
-    transfers ||--o{ transfer_events : "state history"
-    transfers ||--o| ledger_outbox : "posted via"
-
-    customers {
-        uuid id PK
-        text full_name
-        text phone_number UK
-        text kyc_status
-        text status
-    }
-    accounts {
-        uuid id PK
-        uuid customer_id FK
-        text currency
-        text asset
-        text ledger_address UK
-        text status
-    }
-    services {
-        uuid id PK
-        text service_code UK
-        text service_name
-        text status
-    }
-    service_commands {
-        uuid id PK
-        uuid service_id FK
-        text command
-        text status
-        bool allow_partial
-        int max_age_minutes
-        text_array net_amount_add
-        text_array net_amount_subtract
-    }
-    service_pricing_tiers {
-        uuid id PK
-        uuid service_command_id FK
-        text amount_type
-        text currency
-        bigint min_amount
-        bigint max_amount
-        text calc_type
-        text base_amount_type
-        bool include_base
-        bigint fixed_amount
-        int percent_bps
-        bigint min_value
-        bigint max_value
-        timestamptz effective_from
-        timestamptz effective_to
-    }
-    service_movement_entries {
-        uuid id PK
-        uuid service_command_id FK
-        int entry_no
-        text side
-        text account
-        text amount_type
-        bool allow_overdraft
-    }
-    transfers {
-        uuid id PK
-        text idempotency_key UK
-        text type
-        text status
-        uuid service_command_id FK
-        uuid original_transfer_id FK
-        uuid source_customer_id
-        uuid destination_customer_id
-        bigint source_net
-        bigint destination_net
-        text currency
-        bigint amount
-        bigint ledger_tx_id
-    }
-    transfer_amounts {
-        uuid transfer_id PK
-        text amount_type PK
-        bigint amount
-        uuid pricing_tier_id FK
-    }
-    transfer_events {
-        bigint id PK
-        uuid transfer_id FK
-        text from_status
-        text to_status
-        text reason
-    }
-    ledger_outbox {
-        uuid id PK
-        uuid transfer_id FK
-        jsonb request
-        jsonb postings
-        text status
-        int attempts
-        timestamptz next_attempt_at
-    }
+    profile ||--o{ account_product : holds
+    account_product ||--|{ stock : "one per currency"
+    service_group ||--o{ service : groups
+    service ||--o{ service_command : "PAYMENT / REFUND / CANCEL"
+    service_command ||--o{ tier_config : "amount ranges"
+    tier_config ||--o{ tier_amount_rule : prices
+    tier_config ||--o{ balance_movement_config : moves
+    amount_type ||--o{ tier_amount_rule : ""
+    amount_type ||--o{ balance_movement_config : ""
+    service_command ||--o{ service_command_spi : calls
+    spi ||--o{ service_command_spi : ""
+    spi ||--o| spi_internal_config : ""
+    spi ||--o| spi_external_config : ""
+    service ||--o{ payment_orders : ""
+    tier_config ||--o{ payment_orders : "matched"
+    payment_orders |o--o{ payment_orders : "REFUND / CANCEL of"
+    payment_orders ||--|{ payment_order_amount : ""
+    payment_orders ||--o{ payment_order_balance_movement : ""
+    payment_orders ||--|{ payment_order_ledger_tx : "saga steps"
+    payment_orders ||--|{ payment_order_status_history : ""
+    stock ||..o{ payment_orders : "payer / payee (logical)"
 ```
 
-## Amount types
+## Profile Service
 
-Every money component of a transaction has one of these 16 types:
+| Table | Purpose | Key rules |
+| --- | --- | --- |
+| `profile` | Customer (`INDIVIDUAL`), `AGENT`, or the bank itself (`INTERNAL`) | CIF `profile_number` from a sequence; `ACTIVE` only with `kyc_verified` (except `INTERNAL`) |
+| `account_product` | An account a profile holds | `CURRENT` → individuals; `AGENT_FLOAT`, `COMMISSION` → agents; `INTERNAL` (fee income, settlement, VAT payable, …) → the bank; owner type pinned by a composite FK |
+| `stock` | One currency balance inside an account | `ledger_account` = Formance address `{profile type}:{CIF}:{product type}:{stock number}` (ids only); one stock per currency per account |
 
-| Type | Where its value comes from |
+**Defaults on create:** an `INDIVIDUAL` gets a `CURRENT` account, and an `AGENT` gets `AGENT_FLOAT` and `COMMISSION`, each with USD and KHR stocks. `INTERNAL` profiles add accounts explicitly.
+
+**Balance mirror:** Formance POSTs every committed or reverted transaction to `POST /ledger-events`. For each stock touched (its account, or one of its hold accounts `holds:{stock number}:{order}`), the Profile Service reads absolute values back from Formance:
+- `hold_amount` = Σ the stock's hold accounts.
+- `ledger_balance` = stock account + `hold_amount`.
+- `available_balance` = `ledger_balance − hold_amount`, a generated column.
+
+Values are recomputed from Formance, never incremented, so a duplicate event is harmless. `POST /stocks/:id/refresh` recomputes one stock on demand. The payment engine never authorizes spending from these columns; Formance checks funds itself.
+
+## Payment Engine — configuration
+
+| Table | Purpose |
 | --- | --- |
-| `amount` | The request (the only value the caller sends) |
-| `selling_price`, `fee_from_customer`, `fee_from_partner`, `commission_to_agent_1`, `commission_to_agent_2`, `commission_to_partner`, `platform_commission`, `service_charge`, `cancellation_fee`, `discount`, `cash_back`, `purchasing_cost`, `withholding_tax`, `vat` | The command's pricing tier for that type, currency and amount band. 0 when no tier applies |
-| `net_amount` | Per command: `amount + Σ net_amount_add − Σ net_amount_subtract` |
+| `amount_type` | Amount types as data, e.g. `AMOUNT`, `FEE_FROM_CUSTOMER`, `SELLING_PRICE`, `VAT`. Codes are formula-safe (`^[A-Z][A-Z0-9_]*$`) |
+| `service_group` | Groups services (Transfers, Bill payments, …); `INACTIVE` turns off every service in it |
+| `service` | One payable product in **one currency**, e.g. `EDC_BILL_USD` |
+| `service_command` | `PAYMENT`, `REFUND`, `CANCEL`, each with its own tiers and SPI calls |
+| `tier_config` | The amount range `[min, max)` a tier covers; `NULL` = unbounded; active ranges of a command may not overlap (`EXCLUDE` constraint) |
+| `tier_amount_rule` | How each amount type is calculated in a tier (below) |
+| `balance_movement_config` | Which amount type moves from which stock to which, in `movement_sequence` order. `PAYER` / `PAYEE` are the order's stocks; `SPECIFIC` names a stock |
+| `spi`, `spi_internal_config`, `spi_external_config` | Providers. Internal = a handler inside the engine; external = REST endpoint, auth type, `credential_ref` (the secret's name, never the secret), timeout, retries |
+| `service_command_spi` | Which SPI a command calls, at `PRE_PAYMENT`, `POST_PAYMENT` or `NOTIFICATION`, in `execution_sequence` order |
 
-## Service configuration
+**Amount rules,** applied in `calc_sequence` order:
+- `FIXED`: `fixed_value + base_amount_type × percentage / 100`, e.g. FEE = 5% of AMOUNT, or FEE = 0.50.
+- `FORMULA`: an expression of codes, numbers and `+ − × ÷ ( )`, e.g. `SELLING_PRICE = FEE_FROM_CUSTOMER + AMOUNT`.
+- `min_value` and `max_value` cap the result, which is then rounded half up to 2 decimals. Later rules see the rounded values.
 
-A transaction request carries only **service + command, amount, currency, source (payer) and destination (payee)**. Everything else is configured per command, in three steps:
+**Checks before a tier is saved:**
+- A rule may only use `AMOUNT` or types calculated earlier.
+- Every movement's amount type is `AMOUNT` or has a rule.
+- `SPECIFIC` stocks exist in the service currency and aren't closed.
+- The rules price cleanly at the range edges.
 
-1. **Command settings** (`service_commands`): status; for refund/cancel the time window and whether partial refunds are allowed; the net-amount formula.
-2. **Pricing tiers** (`service_pricing_tiers`): how each amount type is calculated.
-3. **Balance movement** (`service_movement_entries`): which account is debited or credited with which amount type. It **can only be saved if it balances**.
+Tiers are immutable once created, because orders reference them. To change a price, switch the tier `INACTIVE` and add a new one.
 
-### `services`
+**Balanced by construction:** every movement moves one amount from one stock to another, so an order can never create or lose money. The plan's from → to pairs replaced the earlier debit/credit entries and their save-time balance check.
 
-| Column | Type | Notes |
+### Example: merchant QR, up to $40 (the spec example)
+
+| Rule | Method | Value |
 | --- | --- | --- |
-| id | uuid PK | Service ID |
-| service_code | text, unique | e.g. `EDC_BILL`; replaces `{service}` in account paths (lower-cased) |
-| service_name | text | Display name |
-| status | text | `active`, `suspended`, `inactive`; only `active` services run commands |
+| 1. `FEE_FROM_CUSTOMER` | FIXED | 5% of `AMOUNT` |
+| 2. `SELLING_PRICE` | FORMULA | `FEE_FROM_CUSTOMER + AMOUNT` |
 
-### `service_commands`
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| service_id | uuid FK | |
-| command | text | `payment`, `refund`, `cancel`; unique per service |
-| status | text | `active`, `disabled` |
-| allow_partial | bool | Refund only: allow less than the original amount |
-| max_age_minutes | int, nullable | Refund/cancel: latest time after the original payment |
-| net_amount_add / net_amount_subtract | text[] | Priced types added to / subtracted from `amount` to get `net_amount` |
-
-### `service_pricing_tiers`
-
-One row per amount type, currency and band of the request amount. Bands for the same type and currency can't overlap while in effect (a Postgres `EXCLUDE` constraint).
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| amount_type | text | Any type except `amount` and `net_amount` |
-| currency | text | `USD` or `KHR` |
-| min_amount, max_amount | bigint | Band on the request amount (smallest unit, inclusive; `max_amount` null = no limit) |
-| calc_type | text | `fixed`, `percent`, `fixed_plus_percent` |
-| base_amount_type | text | What the percentage is taken of: `amount` (default) or another priced type (one level deep, e.g. VAT = 10% of `fee_from_customer`) |
-| include_base | bool | Add the base itself: `selling_price = amount + amount × 5%` |
-| fixed_amount, percent_bps | bigint, int | Fixed part; percentage in basis points (500 = 5%) |
-| min_value, max_value | bigint, nullable | Clamp the calculated part (not the included base) |
-| effective_from, effective_to | timestamptz | A new price starts on a date; old rows are retired, never edited |
-
-value = `(include_base ? base : 0) + clamp(fixed_amount + base × percent_bps / 10,000, min_value, max_value)`. The percentage is rounded half-up to the smallest unit.
-
-**Amount range:** the bands of a command, per currency, also define which amounts it accepts, from the lowest band to the highest. A payment outside that range is rejected. A currency with no tiers accepts any amount, but only if the movement balances without priced types; otherwise that currency isn't offered for this command.
-
-### `service_movement_entries`
-
-Double entry: every entry debits or credits one account with one amount type.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| entry_no | int | Order; unique per command |
-| side | text | `debit` or `credit` |
-| account | text | `{source}` (payer), `{destination}` (payee), `@world`, or a specific account path such as `platform:fees:{service}`; `:usd` / `:khr` is appended |
-| amount_type | text | One of the 16 amount types |
-| allow_overdraft | bool | Specific accounts only (e.g. a marketing budget paying cash back) |
-
-**Balance check before save:**
-- For each currency, the payment service evaluates the pricing tiers at sample amounts: every band's edges and midpoint, plus a spread of round numbers within the command's amount range.
-- At each sample it checks Σ debits = Σ credits. If any amount fails, the save is rejected with the failing amounts.
-- `POST …/movement/check` runs the same check without saving.
-- Adding a tier doesn't block, but its response includes the movement check.
-- The check runs again before every posting, so nothing unbalanced is ever sent to the ledger.
-
-**From entries to ledger postings:** debits are paired with credits in entry order. For example: debit payer 21.00 (selling price); credit payee 20.00 (amount), credit fee account 1.00 (fee). This becomes the postings payer → payee 20.00 and payer → fee account 1.00. Each posting keeps its debit type and credit type.
-
-### Example: the spec's merchant QR payment (≤ $40)
-
-| Tier | Currency | Band | Rule |
+| # | Amount type | From | To |
 | --- | --- | --- | --- |
-| selling_price | USD | ≤ $40.00 | percent 5% of amount, include base → amount + 5% |
-| fee_from_customer | USD | ≤ $40.00 | percent 5% of amount |
+| 1 | `AMOUNT` | PAYER | PAYEE |
+| 2 | `FEE_FROM_CUSTOMER` | PAYER | SPECIFIC: bank *Fee income* |
 
-| # | Side | Account | Amount type |
-| --- | --- | --- | --- |
-| 1 | debit | `{source}` (payer) | selling price |
-| 2 | credit | `{destination}` (payee) | amount |
-| 3 | credit | `platform:fees:{service}` | fee from customer |
+On a $20.00 payment the payer is held, then debited, $21.00 (the selling price). The payee receives $20.00 and fee income $1.00. A $50.00 payment matches no tier and is rejected.
 
-A $20.00 payment: payer −$21.00, payee +$20.00, fee account +$1.00. A $50.00 payment is rejected because it's above the configured range. KHR is reported as not configured.
+## Payment Engine — orders
 
-The seed (`payment/scripts/seed.ts`) also configures:
-- `EDC_BILL`: biller commission, VAT on the fee, agent commission, and a cancel with a cancellation fee.
-- `MOBILE_TOPUP`: cash back paid from a marketing budget.
-- `P2P_TRANSFER`: customer to customer with a service charge.
+| Table | Purpose |
+| --- | --- |
+| `payment_orders` | One order executing one command. Records the matched tier, payer and payee stocks (with name snapshots), amount, currency (FK to the service's currency), `original_order_id` for REFUND / CANCEL, status and reason. `(customer_id, idempotency_key)` is unique |
+| `payment_order_amount` | Every amount type calculated for the order (`AMOUNT` always, others when non-zero) |
+| `payment_order_balance_movement` | The resolved stock-to-stock movements: `PENDING` → `POSTED` (with `core_reference` = Formance tx id) → `REVERSED` on compensation, or `FAILED` |
+| `payment_order_status_history` | Every status change, with `reason_code` and `changed_by` (`SYSTEM`, `customer:{id}`, …) |
+| `payment_order_ledger_tx` | **Added for the saga:** the order's Formance transactions with their planned postings, status and ledger tx id |
 
-## Transfers
+**Saga ledger transactions** (`payment_order_ledger_tx.step`), each posted once with reference `{order id}:{step}`:
 
-### `transfers`
-
-One row per business money movement. Its `id` is sent to Formance as both the `reference` and the `Idempotency-Key`.
-
-| Column | Type | Notes |
+| Step | What it does | When |
 | --- | --- | --- |
-| idempotency_key | text, unique | From the `Idempotency-Key` header (globally unique) |
-| type | text | `payment`, `refund`, `cancel` (service commands) or `topup` (system flow) |
-| status | text | `pending`, `posted`, `failed`, `reversed` |
-| service_id, service_command_id | uuid FK | Null for top-ups |
-| original_transfer_id | uuid FK | Refund/cancel: the payment reversed; its source/destination are reused |
-| source_customer_id / source_account_id | uuid | Payer; null for a top-up |
-| destination_customer_id / destination_account_id | uuid | Payee; null when the movement has no `{destination}` (e.g. a bill payment) |
-| source_net / destination_net | bigint | Net effect of the postings on each customer (+ in, − out) |
-| currency, asset, amount | | Request currency and amount (smallest unit) |
-| ledger_tx_id | bigint | Set when posted |
-| external_ref, failure_reason, metadata | | |
+| `RESERVE` | Money leaving the payer / payee stocks moves to `holds:{stock number}:{order id}` | First, before authorization (skipped when only bank stocks pay) |
+| `SETTLE` | The balance movements, paid from the holds | After authorization and `PRE_PAYMENT` SPIs |
+| `REVERT` | Formance revert of `SETTLE` | Compensation: a `POST_PAYMENT` SPI failed |
+| `RELEASE` | The holds go back to their stocks | Compensation: cancelled, timed out, PRE / POST_PAYMENT failed |
 
-Refunds and cancels are priced with their **own** command's tiers; they don't copy the original's amounts.
+**Overdraft:** `INTERNAL` (bank) stocks may go negative, e.g. the settlement account on cash-in. Customer and agent stocks never can, and Formance enforces it.
 
-### `transfer_amounts`
-
-Every amount type calculated for a transfer: `amount` and `net_amount` always, plus every priced type that isn't zero. Each row records `pricing_tier_id`, so a charge can still be explained after prices change.
-
-### `ledger_outbox`
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| request | jsonb | The exact Formance request (Numscript, reference, metadata), frozen at creation |
-| postings | jsonb | The planned postings with their debit/credit amount types (Formance doesn't store types) |
-| status | text | `queued`, `done`, `dead` (gave up after 10 attempts) |
-| attempts, next_attempt_at, last_error | | Lease (30 s) while posting, then exponential backoff up to 5 min |
-
-## Service transaction flow
-
-```mermaid
-sequenceDiagram
-    participant App as Client
-    participant API as Payment service
-    participant DB as Postgres
-    participant FL as Formance Ledger
-    App->>API: POST /services/{code}/payment (amount, currency, source, destination, Idempotency-Key)
-    API->>DB: load service, command, movement entries
-    API->>DB: amount within the command's range? pricing tiers for currency + amount
-    API->>API: calculate all amount types, check Σ debits = Σ credits
-    API->>API: pair debits with credits → postings → Numscript
-    API->>DB: insert transfer, transfer_amounts, event, outbox (one DB transaction)
-    API->>FL: create transaction (reference = transfer id)
-    alt posted
-        FL-->>API: ledger tx id
-        API->>DB: status = posted
-    else insufficient funds
-        FL-->>API: rejected, nothing applied
-        API->>DB: status = failed
-    end
-    API-->>App: transfer with amounts and net effects
-```
-
-## Transfer state machine
+**Order lifecycle** (`payment_status`):
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: intent recorded
-    pending --> posted: ledger accepted
-    pending --> failed: ledger rejected / business rule
-    posted --> reversed: revert transaction posted
-    failed --> [*]
-    reversed --> [*]
-    posted --> [*]
+    [*] --> PENDING: prepared, money reserved
+    PENDING --> PROCESSING: authorized (or no authorization needed)
+    PENDING --> CANCELLED: cancelled / authorization timed out
+    PENDING --> FAILED: insufficient funds
+    PROCESSING --> COMPLETED: settled, POST_PAYMENT SPIs ok
+    PROCESSING --> FAILED: PRE_PAYMENT rejected / POST_PAYMENT failed (reverted)
+    COMPLETED --> REVERSED: fully refunded or cancelled
 ```
+
+Reason codes fit `VARCHAR(20)`: `INSUFFICIENT_FUNDS`, `AUTH_TIMEOUT`, `CANCELLED_BY_USER`, `PRE_PAY_REJECTED`, `PRE_PAY_FAILED`, `POST_PAY_REJECTED`, `POST_PAY_FAILED`, `FULLY_REFUNDED`, `CANCELLED`.
+
+**Reversals:**
+- `REFUND` and `CANCEL` are orders of their own, priced by their command's tiers, with the original's payer and payee.
+- The original must be `COMPLETED` and is locked while the reversal is checked.
+- `CANCEL` reverses the full amount, and only if nothing was refunded.
+- A `REFUND` can be partial but never exceeds what's left.
+- When reversals reach the full amount, the original becomes `REVERSED`.
+- `POST /payments/:id/cancel` on a `PENDING` order cancels it before authorization instead.
+
+**Authorization:**
+- Customer and agent `PAYMENT` orders wait in `PENDING` (funds held) for `POST /payments/:id/authorize`, a PIN / OTP step in a real app. If none arrives within `AUTH_TIMEOUT_SECONDS` (default 300), the order is `CANCELLED` and the hold released.
+- Orders paid by the bank (`INTERNAL` payer, e.g. cash-in) and REFUND / CANCEL orders run without it.
+
+## Order saga (Temporal)
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant API as Payment Engine API
+    participant T as Temporal (orderSaga)
+    participant P as Profile Service
+    participant L as Formance
+    participant S as SPI (e.g. biller)
+    C->>API: POST /payments (Idempotency-Key)
+    API->>T: start orderSaga (workflow id = order-{customer}-{key})
+    T->>P: stocks of payer, payee, SPECIFIC
+    T->>T: match tier, price amounts, resolve movements, plan ledger steps → PENDING
+    T->>L: RESERVE (holds)
+    API-->>C: 201 PENDING (awaiting authorization)
+    C->>API: POST /payments/:id/authorize
+    API->>T: signal authorize → PROCESSING
+    T->>S: PRE_PAYMENT (e.g. validate bill)
+    T->>L: SETTLE (movements from holds)
+    T->>S: POST_PAYMENT (e.g. confirm bill)
+    alt confirmed
+        T->>API: COMPLETED, then NOTIFICATION (best effort)
+    else rejected / unreachable
+        T->>L: REVERT, then RELEASE
+        T->>API: FAILED
+    end
+    L-->>P: ledger events → stock balances mirrored
+```
+
+- The API waits up to `SAGA_WAIT_MS` (5 s) for the step the caller cares about. It returns 201 if the saga got there, otherwise 202 with the order as it stands.
+- Every activity is idempotent: ledger references, and status transitions that ignore moves out of a final status.
+- If a compensation (`REVERT` / `RELEASE`) is itself refused by the ledger, the workflow fails with `CompensationFailed`, so an operator sees it in the Temporal UI.
 
 ## Required indexes
 
-- `accounts (customer_id, currency)` unique
-- `transfers (idempotency_key)` unique
-- `transfers (type, external_ref)` unique
-- `transfers (source_customer_id, created_at desc)` and `(destination_customer_id, created_at desc)` for history
-- `service_pricing_tiers (service_command_id, currency, amount_type)`
-- `ledger_outbox (status, next_attempt_at)`
+All created by the migrations:
+- `payment_orders`: `(customer_id, idempotency_key)` unique, `(customer_id, created_at desc)`, `(payer_account_id, created_at desc)`, `(payee_account_id, created_at desc)`, `idx_po_in_flight` (partial: `PENDING` / `PROCESSING`), `external_reference`, `original_order_id`.
+- `payment_order_balance_movement`: `idx_pobm_pending` (partial).
+- `payment_order_status_history`: `(payment_order_id, changed_at)`.
+- `account_product`: `profile_id`.
+- `tier_config`: the `EXCLUDE` constraint on active ranges.

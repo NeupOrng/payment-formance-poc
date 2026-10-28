@@ -1,0 +1,23 @@
+meta {
+  name: Update service name
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{paymentUrl}}/services/{{serviceCode}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Bruno QR payment"
+  }
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

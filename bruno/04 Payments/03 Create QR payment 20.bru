@@ -1,0 +1,46 @@
+meta {
+  name: Create QR payment $20
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "{{serviceCode}}",
+    "amount": "20.00",
+    "payerStockId": "{{payerStock}}",
+    "payeeStockId": "{{payeeStock}}"
+  }
+}
+
+script:post-response {
+  bru.setVar("orderId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("PENDING, awaiting authorization", function () {
+    expect(res.body.status).to.equal("PENDING");
+  });
+
+  test("priced: fee 1.00, selling price 21.00", function () {
+    const a = Object.fromEntries(res.body.amounts.map((x) => [x.amountType, x.amount])); expect(a.FEE_FROM_CUSTOMER).to.equal("1.00"); expect(a.SELLING_PRICE).to.equal("21.00");
+  });
+
+  test("movements resolved", function () {
+    expect(res.body.movements.map((m) => m.amountType)).to.eql(["AMOUNT", "FEE_FROM_CUSTOMER"]);
+  });
+}

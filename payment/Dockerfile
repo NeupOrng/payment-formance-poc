@@ -1,4 +1,5 @@
-FROM node:24-alpine AS base
+# Debian (glibc): Temporal's native worker library has no musl/Alpine build.
+FROM node:24-bookworm-slim AS base
 WORKDIR /app
 COPY package.json package-lock.json ./
 
@@ -14,7 +15,7 @@ RUN npm ci
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-FROM node:24-alpine AS prod
+FROM node:24-bookworm-slim AS prod
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/package.json ./

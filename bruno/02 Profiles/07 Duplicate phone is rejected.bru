@@ -1,0 +1,25 @@
+meta {
+  name: Duplicate phone is rejected
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{profileUrl}}/profiles
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "profileType": "INDIVIDUAL",
+    "fullName": "Again",
+    "phoneNumber": "{{payerPhone}}"
+  }
+}
+
+tests {
+  test("status is 409", function () {
+    expect(res.status).to.equal(409);
+  });
+}

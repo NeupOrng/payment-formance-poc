@@ -1,0 +1,30 @@
+meta {
+  name: Payment to an inactive service is rejected
+  type: http
+  seq: 28
+}
+
+post {
+  url: {{paymentUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "serviceCode": "{{serviceCode}}",
+    "amount": "1.00",
+    "payerStockId": "{{payerStock}}",
+    "payeeStockId": "{{payeeStock}}"
+  }
+}
+
+tests {
+  test("status is 422", function () {
+    expect(res.status).to.equal(422);
+  });
+}

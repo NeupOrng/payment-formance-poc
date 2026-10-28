@@ -1,0 +1,32 @@
+meta {
+  name: Create bank (INTERNAL) profile
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{profileUrl}}/profiles
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "profileType": "INTERNAL",
+    "fullName": "Bruno Bank"
+  }
+}
+
+script:post-response {
+  bru.setVar("bankId", res.body.id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("INTERNAL profiles are ACTIVE, no default accounts", function () {
+    expect(res.body.status).to.equal("ACTIVE"); expect(res.body.accounts).to.have.length(0);
+  });
+}

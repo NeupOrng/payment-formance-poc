@@ -1,0 +1,21 @@
+meta {
+  name: Original is REVERSED
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{paymentUrl}}/payments/{{orderId}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("REVERSED", function () {
+    expect(res.body.status).to.equal("REVERSED"); expect(res.body.statusReasonCode).to.equal("FULLY_REFUNDED");
+  });
+}

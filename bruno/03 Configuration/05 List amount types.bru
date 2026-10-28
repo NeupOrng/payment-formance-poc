@@ -1,0 +1,21 @@
+meta {
+  name: List amount types
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{paymentUrl}}/amount-types
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("has AMOUNT", function () {
+    expect(res.body.some((a) => a.code === "AMOUNT")).to.equal(true);
+  });
+}

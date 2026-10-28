@@ -1,0 +1,21 @@
+meta {
+  name: Fee income (Formance)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{paymentUrl}}/stocks/{{feeStock}}/ledger-balance
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("kept 1.00 + 0.50", function () {
+    expect(res.body.ledgerBalance).to.equal("1.50");
+  });
+}

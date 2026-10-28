@@ -1,0 +1,26 @@
+meta {
+  name: Attach SPI as NOTIFICATION
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/PAYMENT/spis
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "spiCode": "{{spiCode}}",
+    "triggerStage": "NOTIFICATION",
+    "executionSequence": 1,
+    "spiOperation": "payment completed"
+  }
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

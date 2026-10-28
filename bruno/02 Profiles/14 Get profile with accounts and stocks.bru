@@ -1,0 +1,21 @@
+meta {
+  name: Get profile with accounts and stocks
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{profileUrl}}/profiles/{{payerId}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("balances start at 0", function () {
+    expect(res.body.accounts[0].stocks[0].ledgerBalance).to.equal("0.00");
+  });
+}

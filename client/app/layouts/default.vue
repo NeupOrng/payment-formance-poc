@@ -10,9 +10,12 @@ import { Landmark } from 'lucide-vue-next'
           <Landmark class="size-5" />
           Mobile Bank Console
         </NuxtLink>
-        <nav class="text-sm text-muted-foreground">
-          <NuxtLink to="/" class="hover:text-foreground" active-class="text-foreground">
-            Customers
+        <nav class="flex gap-4 text-sm text-muted-foreground">
+          <NuxtLink to="/" class="hover:text-foreground" exact-active-class="text-foreground">
+            Profiles
+          </NuxtLink>
+          <NuxtLink to="/services" class="hover:text-foreground" active-class="text-foreground">
+            Services
           </NuxtLink>
         </nav>
       </div>

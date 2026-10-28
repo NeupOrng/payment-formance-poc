@@ -1,21 +1,43 @@
-# Payment service
+# Payment Engine
 
 See the root `CLAUDE.md` for stack conventions and domain rules, and `docs/05-schema.md` for the model.
 
-- **Public payment API:** `POST /payments` (body `serviceCode`, `amount`, `currency`, `source`, `destination?`), `POST /payments/:id/refund` and `POST /payments/:id/cancel` are thin wrappers over `executeCommand()` (`pay()`, `reversePayment()` in `transfers.service.ts`). Keep all rules in `executeCommand()`; don't duplicate them in the wrappers.
-- **Callers send only** service + command, `amount`, `currency`, `source` (payer customer) and `destination` (payee customer, only if the movement uses `{destination}`). Refund and cancel send `originalTransferId` and reuse the original's parties. Never add other amount inputs to the request; new values belong in pricing tiers.
-- **16 amount types** (`AMOUNT_TYPES` in `src/db/schema.ts`):
-  - `amount` comes from the request.
-  - `net_amount` comes from the command's `net_amount_add` / `net_amount_subtract`.
-  - Every other type comes from `service_pricing_tiers`, calculated by `src/pricing/pricing.ts` (`ruleValue`, `computeAmounts`). Rules based on `amount` run first, then rules based on another type, one level deep. `include_base` gives "selling price = amount + x%".
-- **Balance movement:** `service_movement_entries` lists debit and credit entries. `src/movement/movement.ts`:
-  - `checkBalance` samples amounts inside the command's band range, per currency, and must find Σ debits = Σ credits. It runs before a movement is saved, in `POST …/movement/check`, and in every pricing-tier response.
-  - `planPostings` pairs debits with credits in entry order, skips self-pairs and zero values, and throws if the movement is unbalanced. It's called again before every posting.
-  - `toNumscript` writes one `send` per posting, with `allowing unbounded overdraft` only on entries that set `allow_overdraft`.
-- **Ledger postings carry amount types:** the planned postings, with their `debitType` and `creditType`, are stored in `ledger_outbox.postings`. `GET /transfers/:id/ledger` matches them to Formance's postings by index.
-- **Refunds and cancels are priced with their own command's tiers.** They don't copy the original's amounts. `reversalAmount()` locks the original `FOR UPDATE` and checks the window, partial-refund rule and total.
-- **Ledger errors:**
-  - A 400 marks the transfer `failed`.
-  - A 409 `CONFLICT` means the posting already exists; the poster looks it up by reference and marks the transfer `posted`.
-  - Anything else is retried with backoff, until `dead` after 10 attempts.
-- **Example configuration** is in `scripts/seed.ts`: EDC_BILL, MOBILE_TOPUP, MERCHANT_QR (the spec example) and P2P_TRANSFER. `architecture/scripts/smoke.mjs` depends on those exact numbers.
+- **Configuration is the product.**
+  - `CatalogService.createTier` validates a tier before saving it:
+    - Rule order and references (`validateRules`).
+    - Movements use priced amount types.
+    - `SPECIFIC` stocks exist in the service currency.
+    - The rules price cleanly at the range edges.
+  - Keep that validation in front of every new configuration path.
+- **Pricing** (`src/pricing/`): `FIXED` = fixed + base × percentage / 100; `FORMULA` = codes, numbers, `+ − × ÷ ( )` only (no `eval`). The maths uses exact fractions, clamps to min / max, rounds half up to 2 decimals, and later rules see the rounded values.
+- **Saga** (`src/temporal/workflows.ts`), run by `orderSaga`:
+  1. `prepareOrder`.
+  2. `RESERVE`.
+  3. Wait for the `authorize` / `cancel` signal, with a timeout.
+  4. `PROCESSING`.
+  5. `PRE_PAYMENT` SPIs.
+  6. `SETTLE`.
+  7. `POST_PAYMENT` SPIs.
+  8. `COMPLETED`.
+  9. `NOTIFICATION` (best effort).
+
+  The state is exposed through the `state` query, and the API polls it to decide between 201 and 202.
+- **Compensation:**
+  - A ledger refusal at `RESERVE` fails the order with `INSUFFICIENT_FUNDS`.
+  - A cancellation, an authorization timeout, or a `PRE_PAYMENT` failure triggers `RELEASE`.
+  - A `POST_PAYMENT` failure triggers `REVERT` then `RELEASE`.
+  - A refused compensation throws `CompensationFailed`, so it shows in the Temporal UI.
+- **Idempotency everywhere:**
+  - Workflow id is `order-{payer profile}-{Idempotency-Key}`, with `REJECT_DUPLICATE` + `USE_EXISTING`.
+  - `prepare` returns the existing order for a known key.
+  - Ledger references are `{orderId}:{step}`.
+  - `transition()` ignores illegal or repeated moves.
+- **Activities:**
+  - `prepareOrder` turns 4xx `HttpException`s into a non-retryable `ValidationError`, which the API maps back to the same status.
+  - SPI rejections (4xx, or an internal handler saying no) are non-retryable `SpiRejected`. Outages retry up to the SPI's `max_retries`.
+- **Internal SPI handlers** live in `SpiRunnerService.handlers`: `sanctions-screening`, `push-notification`, `noop`. External SPIs support `REST` with `NONE` / `API_KEY` / `BASIC` auth for now.
+- **Ledger plan** (`planLedger`):
+  - Only customer-facing stocks (payer / payee whose product isn't `INTERNAL`) are reserved.
+  - `INTERNAL` sources may overdraft.
+  - `REVERT` uses Formance's revert API (no script).
+- **Seed and tests depend on exact numbers:** `scripts/seed.ts` (CASH_IN, P2P, EDC_BILL_USD, MERCHANT_QR_USD, MOBILE_TOPUP_USD) and `architecture/scripts/smoke.mjs`.

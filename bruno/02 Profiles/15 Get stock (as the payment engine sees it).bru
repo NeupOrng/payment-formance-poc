@@ -1,0 +1,21 @@
+meta {
+  name: Get stock (as the payment engine sees it)
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{profileUrl}}/stocks/{{payerStock}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("includes account and owner", function () {
+    expect(res.body.account.productType).to.equal("CURRENT"); expect(res.body.profile.id).to.equal(bru.getVar("payerId"));
+  });
+}

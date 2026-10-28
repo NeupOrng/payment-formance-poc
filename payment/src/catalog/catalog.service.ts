@@ -6,358 +6,434 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, gt, gte, isNull, lte, or } from 'drizzle-orm';
-import { MAX_AMOUNT } from '../common/money.js';
-import { isExclusionViolation, isUniqueViolation } from '../common/pg-errors.js';
+import { and, asc, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
+import { toDecimal, toMinor } from '../common/money.js';
+import { pgError } from '../common/pg-errors.js';
 import { DRIZZLE, type Database } from '../db/database.module.js';
 import {
-  ACCOUNT_PATH_PATTERN,
-  CURRENCIES,
-  PARTY_ACCOUNTS,
-  serviceCommands,
-  serviceMovementEntries,
-  servicePricingTiers,
-  services,
-  type Command,
-  type Currency,
+  amountType,
+  balanceMovementConfig,
+  service,
+  serviceCommand,
+  serviceCommandSpi,
+  serviceGroup,
+  spi,
+  spiExternalConfig,
+  spiInternalConfig,
+  tierAmountRule,
+  tierConfig,
+  type CommandType,
   type ServiceCommand,
 } from '../db/schema.js';
-import { amountRange, checkBalance, type MovementEntry } from '../movement/movement.js';
+import { resolveMovements } from '../movement/movement.js';
+import { computeAmounts, validateRules, type AmountRule } from '../pricing/pricing.js';
+import { canReceive, ProfileClient } from '../profile/profile.client.js';
 import type {
-  CreatePricingTierDto,
+  AddCommandSpiDto,
+  CreateAmountTypeDto,
   CreateServiceDto,
-  MovementDto,
-  RetirePricingTierDto,
+  CreateServiceGroupDto,
+  CreateSpiDto,
+  CreateTierDto,
+  StatusDto,
   UpdateServiceDto,
+  UpdateServiceGroupDto,
   UpsertCommandDto,
 } from './dto.js';
 
-type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
+type Db = Database | Parameters<Parameters<Database['transaction']>[0]>[0];
 
-/** Services, their commands (payment / refund / cancel), pricing tiers and balance movements. */
+export type SpiCall = {
+  stage: 'PRE_PAYMENT' | 'POST_PAYMENT' | 'NOTIFICATION';
+  sequence: number;
+  spiCode: string;
+  spiType: 'INTERNAL' | 'EXTERNAL';
+  operation: string;
+  timeoutMs: number;
+  maxRetries: number;
+};
+
+const conflict = (err: unknown, message: string) => {
+  const code = pgError(err)?.code;
+  if (code === '23505') return new ConflictException(message);
+  if (code === '23P01') return new ConflictException('an ACTIVE tier of this command already covers part of that amount range');
+  if (code === '23503') return new BadRequestException('referenced record does not exist');
+  if (code === '23514') return new BadRequestException(`violates a rule of the schema: ${pgError(err)?.constraint}`);
+  return err;
+};
+
+/** Configuration: service groups → services → commands → tiers (amount rules + balance movements) and SPIs. */
 @Injectable()
 export class CatalogService {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Database,
+    private readonly profiles: ProfileClient,
+  ) {}
+
+  // ------------------------------------------------------------------ amount types and groups
+
+  listAmountTypes() {
+    return this.db.select().from(amountType).orderBy(asc(amountType.code));
+  }
+
+  async createAmountType(dto: CreateAmountTypeDto) {
+    try {
+      const [row] = await this.db.insert(amountType).values(dto).returning();
+      return row;
+    } catch (err) {
+      throw conflict(err, `amount type ${dto.code} already exists`);
+    }
+  }
+
+  listGroups() {
+    return this.db.select().from(serviceGroup).orderBy(asc(serviceGroup.name));
+  }
+
+  async createGroup(dto: CreateServiceGroupDto) {
+    const [row] = await this.db.insert(serviceGroup).values(dto).returning();
+    return row;
+  }
+
+  async updateGroup(id: string, dto: UpdateServiceGroupDto) {
+    const [row] = await this.db.update(serviceGroup).set({ ...dto, updatedAt: new Date() }).where(eq(serviceGroup.id, id)).returning();
+    if (!row) throw new NotFoundException('service group not found');
+    return row;
+  }
+
+  // ------------------------------------------------------------------ services and commands
 
   async createService(dto: CreateServiceDto) {
     try {
-      const [service] = await this.db.insert(services).values(dto).returning();
-      return service;
+      const [row] = await this.db.insert(service).values(dto).returning();
+      return row;
     } catch (err) {
-      if (isUniqueViolation(err)) throw new ConflictException('service code already exists');
-      throw err;
+      throw conflict(err, `service ${dto.code} already exists`);
     }
   }
 
   listServices() {
-    return this.db.select().from(services).orderBy(asc(services.serviceCode));
+    return this.db
+      .select({ service, group: { id: serviceGroup.id, name: serviceGroup.name, status: serviceGroup.status } })
+      .from(service)
+      .innerJoin(serviceGroup, eq(serviceGroup.id, service.serviceGroupId))
+      .orderBy(asc(service.code))
+      .then((rows) => rows.map((r) => ({ ...r.service, group: r.group })));
   }
 
+  /** The whole configuration of a service: commands with their SPI calls and tiers (rules + movements). */
   async getService(code: string) {
-    const service = await this.findService(code);
-    const commands = await this.db
-      .select()
-      .from(serviceCommands)
-      .where(eq(serviceCommands.serviceId, service.id))
-      .orderBy(asc(serviceCommands.command));
-
+    const svc = await this.findService(code);
+    const [group] = await this.db.select().from(serviceGroup).where(eq(serviceGroup.id, svc.serviceGroupId));
+    const commands = await this.db.select().from(serviceCommand).where(eq(serviceCommand.serviceId, svc.id)).orderBy(asc(serviceCommand.commandType));
     return {
-      ...service,
+      ...svc,
+      group,
       commands: await Promise.all(
         commands.map(async (cmd) => ({
           ...cmd,
-          movement: await this.entriesOf(cmd.id),
-          pricingTiers: await this.db
-            .select()
-            .from(servicePricingTiers)
-            .where(eq(servicePricingTiers.serviceCommandId, cmd.id))
-            .orderBy(
-              asc(servicePricingTiers.amountType),
-              asc(servicePricingTiers.currency),
-              asc(servicePricingTiers.minAmount),
-            ),
+          spis: await this.commandSpiRows(cmd.id),
+          tiers: await Promise.all(
+            (await this.db.select().from(tierConfig).where(eq(tierConfig.serviceCommandId, cmd.id)).orderBy(asc(tierConfig.minAmount)))
+              .map(async (tier) => ({ ...tier, ...(await this.tierDetails(tier.id)) })),
+          ),
         })),
       ),
     };
   }
 
   async updateService(code: string, dto: UpdateServiceDto) {
-    const [service] = await this.db
-      .update(services)
-      .set({ ...dto, updatedAt: new Date() })
-      .where(eq(services.serviceCode, code))
+    const [row] = await this.db.update(service).set({ ...dto, updatedAt: new Date() }).where(eq(service.code, code)).returning();
+    if (!row) throw new NotFoundException(`service ${code} not found`);
+    return row;
+  }
+
+  async upsertCommand(code: string, type: CommandType, dto: UpsertCommandDto) {
+    const svc = await this.findService(code);
+    const status = dto.status ?? 'ACTIVE';
+    const [row] = await this.db
+      .insert(serviceCommand)
+      .values({ serviceId: svc.id, commandType: type, status })
+      .onConflictDoUpdate({ target: [serviceCommand.serviceId, serviceCommand.commandType], set: { status, updatedAt: new Date() } })
       .returning();
-    if (!service) throw new NotFoundException('service not found');
-    return service;
+    return row;
   }
 
-  /** Creates or updates a command's settings and net-amount formula. */
-  async upsertCommand(code: string, command: Command, dto: UpsertCommandDto) {
-    const add = new Set(dto.netAmountAdd ?? []);
-    if ((dto.netAmountSubtract ?? []).some((t) => add.has(t))) {
-      throw new BadRequestException('an amount type cannot be both added to and subtracted from net_amount');
-    }
-    if (command === 'payment' && (dto.allowPartial || dto.maxAgeMinutes)) {
-      throw new BadRequestException('allowPartial and maxAgeMinutes apply to refund/cancel only');
-    }
-    const service = await this.findService(code);
-    const values = {
-      status: dto.status ?? 'active',
-      allowPartial: dto.allowPartial ?? false,
-      maxAgeMinutes: dto.maxAgeMinutes ?? null,
-      netAmountAdd: dto.netAmountAdd ?? [],
-      netAmountSubtract: dto.netAmountSubtract ?? [],
-    };
-    const [cmd] = await this.db
-      .insert(serviceCommands)
-      .values({ serviceId: service.id, command, ...values })
-      .onConflictDoUpdate({
-        target: [serviceCommands.serviceId, serviceCommands.command],
-        set: { ...values, updatedAt: new Date() },
-      })
-      .returning();
-    return cmd;
-  }
+  // ------------------------------------------------------------------ SPIs
 
-  /**
-   * Checks a balance movement against the command's current pricing tiers without saving it:
-   * Σ debits must equal Σ credits for every sampled amount in every currency.
-   */
-  async checkMovement(code: string, command: Command, dto: MovementDto) {
-    this.validateEntries(dto);
-    const cmd = await this.findCommand(code, command);
-    return this.balanceReport(cmd, this.toEntries(dto));
-  }
-
-  /** Replaces a command's balance movement; refused unless it balances. */
-  async setMovement(code: string, command: Command, dto: MovementDto) {
-    this.validateEntries(dto);
-    const cmd = await this.findCommand(code, command);
-    const entries = this.toEntries(dto);
-    const report = await this.balanceReport(cmd, entries);
-    if (!report.balanced) {
-      throw new BadRequestException({
-        message: 'balance movement is not balanced: debits must equal credits',
-        problems: report.problems,
-      });
+  async createSpi(dto: CreateSpiDto) {
+    const config = dto.spiType === 'INTERNAL' ? dto.internal : dto.external;
+    if (!config || (dto.spiType === 'INTERNAL' ? dto.external : dto.internal)) {
+      throw new BadRequestException(`an ${dto.spiType} SPI needs exactly its "${dto.spiType.toLowerCase()}" config`);
     }
-    return this.db.transaction(async (tx) => {
-      await tx.delete(serviceMovementEntries).where(eq(serviceMovementEntries.serviceCommandId, cmd.id));
-      const saved = await tx
-        .insert(serviceMovementEntries)
-        .values(entries.map((e) => ({ ...e, serviceCommandId: cmd.id })))
-        .returning();
-      return { ...report, entries: saved };
-    });
-  }
-
-  /**
-   * Adds a pricing tier. The tier is saved even if the movement no longer balances (tiers are often
-   * added one by one); the response carries the movement check so the admin sees what to fix.
-   */
-  async addPricingTier(code: string, command: Command, dto: CreatePricingTierDto) {
-    const cmd = await this.findCommand(code, command);
-    const minAmount = BigInt(dto.minAmount);
-    const maxAmount = dto.maxAmount === undefined ? null : BigInt(dto.maxAmount);
-    if (maxAmount !== null && maxAmount < minAmount) {
-      throw new BadRequestException('maxAmount must be >= minAmount');
-    }
-    if (dto.baseAmountType === dto.amountType) {
-      throw new BadRequestException('baseAmountType must differ from amountType');
-    }
-    let tier;
     try {
-      [tier] = await this.db
-        .insert(servicePricingTiers)
-        .values({
-          serviceCommandId: cmd.id,
-          amountType: dto.amountType,
-          currency: dto.currency,
-          minAmount,
-          maxAmount,
-          calcType: dto.calcType,
-          baseAmountType: dto.baseAmountType ?? 'amount',
-          includeBase: dto.includeBase ?? false,
-          fixedAmount: BigInt(dto.fixedAmount ?? '0'),
-          percentBps: dto.percentBps ?? 0,
-          minValue: dto.minValue === undefined ? null : BigInt(dto.minValue),
-          maxValue: dto.maxValue === undefined ? null : BigInt(dto.maxValue),
-          ...(dto.effectiveFrom && { effectiveFrom: new Date(dto.effectiveFrom) }),
-          effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
-        })
-        .returning();
+      const id = await this.db.transaction(async (tx) => {
+        const [row] = await tx.insert(spi).values({ code: dto.code, name: dto.name, spiType: dto.spiType }).returning();
+        if (dto.internal) await tx.insert(spiInternalConfig).values({ spiId: row.id, ...dto.internal });
+        if (dto.external) await tx.insert(spiExternalConfig).values({ spiId: row.id, ...dto.external, credentialRef: dto.external.credentialRef ?? null });
+        return row.id;
+      });
+      return (await this.listSpis()).find((s) => s.id === id);
     } catch (err) {
-      if (isExclusionViolation(err)) {
-        throw new ConflictException(
-          'pricing tier overlaps an existing band for this amount type, currency and period',
-        );
-      }
-      throw err;
+      throw conflict(err, `SPI ${dto.code} already exists`);
     }
-    const entries = await this.entriesOf(cmd.id);
-    return { ...tier, movementCheck: entries.length ? await this.balanceReport(cmd, entries) : null };
   }
 
-  /** Tiers are never edited in place (transfers reference them); retire one and add a new one instead. */
-  async retirePricingTier(id: string, dto: { effectiveTo: string }) {
-    const [tier] = await this.db
-      .update(servicePricingTiers)
-      .set({ effectiveTo: new Date(dto.effectiveTo) })
-      .where(eq(servicePricingTiers.id, id))
-      .returning();
-    if (!tier) throw new NotFoundException('pricing tier not found');
-    return tier;
-  }
-
-  /** Loads everything needed to execute a command, enforcing that service and command are active. */
-  async resolveForExecution(code: string, command: Command) {
-    const service = await this.findService(code);
-    if (service.status !== 'active') {
-      throw new UnprocessableEntityException(`service ${code} is ${service.status}`);
-    }
-    const cmd = await this.findCommand(code, command, service.id);
-    if (cmd.status !== 'active') {
-      throw new UnprocessableEntityException(`command ${command} is disabled for ${code}`);
-    }
-    const entries = await this.entriesOf(cmd.id);
-    if (!entries.length) throw new UnprocessableEntityException(`command ${command} has no balance movement`);
-    return { service, command: cmd, entries };
-  }
-
-  /** Every specific account path used by any command of a service (for its balances). */
-  async accountPaths(code: string): Promise<string[]> {
-    const service = await this.findService(code);
+  async listSpis() {
     const rows = await this.db
-      .selectDistinct({ account: serviceMovementEntries.account })
-      .from(serviceMovementEntries)
-      .innerJoin(serviceCommands, eq(serviceCommands.id, serviceMovementEntries.serviceCommandId))
-      .where(eq(serviceCommands.serviceId, service.id));
-    return rows
-      .map((r) => r.account)
-      .filter((a) => !(PARTY_ACCOUNTS as readonly string[]).includes(a))
-      .sort();
+      .select({ spi, internal: spiInternalConfig, external: spiExternalConfig })
+      .from(spi)
+      .leftJoin(spiInternalConfig, eq(spiInternalConfig.spiId, spi.id))
+      .leftJoin(spiExternalConfig, eq(spiExternalConfig.spiId, spi.id))
+      .orderBy(asc(spi.code));
+    return rows.map((r) => ({ ...r.spi, internal: r.internal, external: r.external }));
   }
 
-  /** Rejects an amount outside the command's configured bands; returns whether the currency has any tiers. */
-  async assertInRange(db: Tx | Database, cmd: ServiceCommand, currency: Currency, amount: bigint, at: Date) {
-    const bands = await db
-      .select({ minAmount: servicePricingTiers.minAmount, maxAmount: servicePricingTiers.maxAmount })
-      .from(servicePricingTiers)
-      .where(
-        and(
-          eq(servicePricingTiers.serviceCommandId, cmd.id),
-          eq(servicePricingTiers.currency, currency),
-          lte(servicePricingTiers.effectiveFrom, at),
-          or(isNull(servicePricingTiers.effectiveTo), gt(servicePricingTiers.effectiveTo, at)),
-        ),
-      );
-    const range = amountRange(bands);
-    if (!range) return false;
-    if (amount < range.min || (range.max !== null && amount > range.max)) {
-      throw new UnprocessableEntityException(
-        `amount ${amount} is outside the ${currency} range ${range.min}–${range.max ?? '∞'} configured for ${cmd.command}`,
-      );
+  async updateSpi(code: string, dto: StatusDto) {
+    const [row] = await this.db.update(spi).set({ status: dto.status, updatedAt: new Date() }).where(eq(spi.code, code)).returning();
+    if (!row) throw new NotFoundException(`SPI ${code} not found`);
+    return row;
+  }
+
+  async addCommandSpi(code: string, type: CommandType, dto: AddCommandSpiDto) {
+    const cmd = await this.findCommand(code, type);
+    const [target] = await this.db.select().from(spi).where(eq(spi.code, dto.spiCode));
+    if (!target) throw new NotFoundException(`SPI ${dto.spiCode} not found`);
+    try {
+      const [row] = await this.db
+        .insert(serviceCommandSpi)
+        .values({ serviceCommandId: cmd.id, spiId: target.id, triggerStage: dto.triggerStage, executionSequence: dto.executionSequence, spiOperation: dto.spiOperation })
+        .returning();
+      return row;
+    } catch (err) {
+      throw conflict(err, `${dto.triggerStage} already has a call with sequence ${dto.executionSequence}`);
     }
-    return true;
   }
 
-  /** The tiers in effect for this currency and request amount: at most one per amount type. */
-  findPricingTiers(db: Tx | Database, cmd: ServiceCommand, currency: Currency, amount: bigint, at: Date) {
-    return db
-      .select()
-      .from(servicePricingTiers)
-      .where(
-        and(
-          eq(servicePricingTiers.serviceCommandId, cmd.id),
-          eq(servicePricingTiers.currency, currency),
-          lte(servicePricingTiers.minAmount, amount),
-          or(isNull(servicePricingTiers.maxAmount), gte(servicePricingTiers.maxAmount, amount)),
-          lte(servicePricingTiers.effectiveFrom, at),
-          or(isNull(servicePricingTiers.effectiveTo), gt(servicePricingTiers.effectiveTo, at)),
-        ),
-      );
+  async updateCommandSpi(id: string, dto: StatusDto) {
+    const [row] = await this.db.update(serviceCommandSpi).set({ status: dto.status }).where(eq(serviceCommandSpi.id, id)).returning();
+    if (!row) throw new NotFoundException('command SPI not found');
+    return row;
   }
 
-  /** Σ debits vs Σ credits at sampled amounts, per currency, with the tiers in effect now. */
-  private async balanceReport(cmd: ServiceCommand, entries: MovementEntry[]) {
-    const now = new Date();
-    const tiers = await this.db
-      .select()
-      .from(servicePricingTiers)
-      .where(
-        and(
-          eq(servicePricingTiers.serviceCommandId, cmd.id),
-          lte(servicePricingTiers.effectiveFrom, now),
-          or(isNull(servicePricingTiers.effectiveTo), gt(servicePricingTiers.effectiveTo, now)),
-        ),
-      );
-    const problems = [];
-    // A currency with no tiers whose movement only balances with priced amounts is simply not
-    // offered for this command: reported, not blocking. Payments in it are refused at run time.
-    const unconfiguredCurrencies: Currency[] = [];
-    for (const currency of CURRENCIES) {
-      const rules = tiers.filter((t) => t.currency === currency);
-      try {
-        const found = checkBalance(entries, rules, cmd, MAX_AMOUNT);
-        if (found.length && !rules.length) unconfiguredCurrencies.push(currency);
-        else problems.push(...found.map((p) => ({ currency, ...p })));
-      } catch (err) {
-        problems.push({ currency, amount: '-', debit: '-', credit: '-', error: (err as Error).message });
+  // ------------------------------------------------------------------ tiers
+
+  /**
+   * Creates a tier with its amount rules and balance movements. Validated before saving: formulas
+   * only use AMOUNT or earlier results, movement amount types are priced, SPECIFIC stocks exist in
+   * the service currency, and the rules price cleanly at the edges of the range.
+   */
+  async createTier(code: string, type: CommandType, dto: CreateTierDto) {
+    const svc = await this.findService(code);
+    const cmd = await this.findCommand(code, type, svc.id);
+    const known = new Set((await this.listAmountTypes()).map((a) => a.code));
+    const rules = dto.rules.map((r) => this.toRule(r));
+    const problems = validateRules(rules, known);
+
+    const priced = new Set(['AMOUNT', ...rules.map((r) => r.amountType)]);
+    const seq = new Set<number>();
+    for (const m of dto.movements) {
+      const where = `movement ${m.movementSequence}`;
+      if (seq.has(m.movementSequence)) problems.push(`${where}: movement_sequence is used twice`);
+      seq.add(m.movementSequence);
+      if (!known.has(m.amountType)) problems.push(`${where}: unknown amount type ${m.amountType}`);
+      else if (!priced.has(m.amountType)) problems.push(`${where}: ${m.amountType} has no rule in this tier, so it would always be 0`);
+      if ((m.fromStockRole === 'SPECIFIC') !== !!m.fromStockId) problems.push(`${where}: fromStockId is required exactly when fromStockRole is SPECIFIC`);
+      if ((m.toStockRole === 'SPECIFIC') !== !!m.toStockId) problems.push(`${where}: toStockId is required exactly when toStockRole is SPECIFIC`);
+    }
+
+    const specificIds = dto.movements.flatMap((m) => [m.fromStockId, m.toStockId]).filter((id): id is string => !!id);
+    const stocks = await this.profiles.stocks(specificIds);
+    for (const id of new Set(specificIds)) {
+      const s = stocks.find((x) => x.id === id);
+      if (!s) problems.push(`stock ${id} does not exist`);
+      else if (s.currency !== svc.currency) problems.push(`stock ${s.stockNumber} is ${s.currency}, the service is ${svc.currency}`);
+      else if (!canReceive(s)) problems.push(`stock ${s.stockNumber} is closed`);
+    }
+
+    if (!problems.length) {
+      for (const edge of this.edges(dto.minAmount, dto.maxAmount)) {
+        try {
+          const amounts = computeAmounts(edge, rules);
+          resolveMovements(dto.movements.map((m) => ({ ...m, fromStockId: m.fromStockId ?? null, toStockId: m.toStockId ?? null })), amounts, { payer: 'payer', payee: 'payee' });
+        } catch (err) {
+          problems.push(`at amount ${toDecimal(edge)}: ${(err as Error).message}`);
+        }
       }
     }
-    return { balanced: problems.length === 0, unconfiguredCurrencies, problems: problems.slice(0, 20) };
-  }
+    if (problems.length) throw new BadRequestException({ message: 'tier configuration is invalid', problems });
 
-  private entriesOf(commandId: string): Promise<MovementEntry[]> {
-    return this.db
-      .select({
-        entryNo: serviceMovementEntries.entryNo,
-        side: serviceMovementEntries.side,
-        account: serviceMovementEntries.account,
-        amountType: serviceMovementEntries.amountType,
-        allowOverdraft: serviceMovementEntries.allowOverdraft,
-      })
-      .from(serviceMovementEntries)
-      .where(eq(serviceMovementEntries.serviceCommandId, commandId))
-      .orderBy(asc(serviceMovementEntries.entryNo));
-  }
-
-  private toEntries(dto: MovementDto): MovementEntry[] {
-    return dto.entries.map((e) => ({ ...e, allowOverdraft: e.allowOverdraft ?? false }));
-  }
-
-  private validateEntries(dto: MovementDto) {
-    const numbers = new Set(dto.entries.map((e) => e.entryNo));
-    if (numbers.size !== dto.entries.length) throw new BadRequestException('entryNo must be unique');
-    if (!dto.entries.some((e) => e.side === 'debit') || !dto.entries.some((e) => e.side === 'credit')) {
-      throw new BadRequestException('a balance movement needs at least one debit and one credit');
-    }
-    for (const e of dto.entries) {
-      const party = (PARTY_ACCOUNTS as readonly string[]).includes(e.account);
-      if (!party && !ACCOUNT_PATH_PATTERN.test(e.account)) {
-        throw new BadRequestException(
-          `entry ${e.entryNo}: account must be ${PARTY_ACCOUNTS.join(', ')} or a path like platform:fees:{service}`,
+    try {
+      const id = await this.db.transaction(async (tx) => {
+        const [tier] = await tx
+          .insert(tierConfig)
+          .values({ serviceCommandId: cmd.id, minAmount: dto.minAmount ?? null, maxAmount: dto.maxAmount ?? null })
+          .returning();
+        if (rules.length) await tx.insert(tierAmountRule).values(rules.map((r) => ({ ...r, tierConfigId: tier.id })));
+        await tx.insert(balanceMovementConfig).values(
+          dto.movements.map((m) => ({ ...m, tierConfigId: tier.id, fromStockId: m.fromStockId ?? null, toStockId: m.toStockId ?? null })),
         );
-      }
-      if (party && e.allowOverdraft) {
-        throw new BadRequestException(`entry ${e.entryNo}: allowOverdraft is only for specific accounts`);
-      }
+        return tier.id;
+      });
+      return this.getTier(id);
+    } catch (err) {
+      throw conflict(err, 'tier already exists');
     }
+  }
+
+  /** Tiers are immutable once created (orders reference them); they can only be switched off. */
+  async updateTier(id: string, dto: StatusDto) {
+    try {
+      const [row] = await this.db.update(tierConfig).set({ status: dto.status, updatedAt: new Date() }).where(eq(tierConfig.id, id)).returning();
+      if (!row) throw new NotFoundException('tier not found');
+      return row;
+    } catch (err) {
+      throw conflict(err, 'tier conflict');
+    }
+  }
+
+  async getTier(id: string) {
+    const [tier] = await this.db.select().from(tierConfig).where(eq(tierConfig.id, id));
+    if (!tier) throw new NotFoundException('tier not found');
+    return { ...tier, ...(await this.tierDetails(id)) };
+  }
+
+  /** Dry run: the amounts and movements an order of this amount would get from this tier. */
+  async previewTier(id: string, amount: string) {
+    const tier = await this.getTier(id);
+    const values = this.amountsFor(toMinor(amount), tier.rules);
+    const movements = resolveMovements(tier.movements, values, { payer: 'PAYER', payee: 'PAYEE' });
+    return {
+      tierId: id,
+      amounts: Object.fromEntries([...values].map(([k, v]) => [k, toDecimal(v)])),
+      movements: movements.map((m) => ({ ...m, amount: toDecimal(m.amount) })),
+    };
+  }
+
+  // ------------------------------------------------------------------ used by orders
+
+  async resolveForOrder(code: string, type: CommandType) {
+    const svc = await this.findService(code);
+    const [group] = await this.db.select().from(serviceGroup).where(eq(serviceGroup.id, svc.serviceGroupId));
+    if (svc.status !== 'ACTIVE' || group.status !== 'ACTIVE') {
+      throw new UnprocessableEntityException(`service ${code} is not active`);
+    }
+    const cmd = await this.findCommand(code, type, svc.id);
+    if (cmd.status !== 'ACTIVE') throw new UnprocessableEntityException(`${type} is not active for ${code}`);
+    return { service: svc, command: cmd };
+  }
+
+  /** The ACTIVE tier whose [min, max) range contains the amount. */
+  async matchTier(db: Db, cmd: ServiceCommand, amountMinor: bigint) {
+    const amount = toDecimal(amountMinor);
+    const [tier] = await db
+      .select()
+      .from(tierConfig)
+      .where(
+        and(
+          eq(tierConfig.serviceCommandId, cmd.id),
+          eq(tierConfig.status, 'ACTIVE'),
+          or(isNull(tierConfig.minAmount), lte(tierConfig.minAmount, amount)),
+          or(isNull(tierConfig.maxAmount), gt(tierConfig.maxAmount, amount)),
+        ),
+      );
+    if (!tier) throw new UnprocessableEntityException(`no active ${cmd.commandType} tier covers amount ${amount}`);
+    return { tier, ...(await this.tierDetails(tier.id, db)) };
+  }
+
+  amountsFor(amountMinor: bigint, rules: AmountRule[]) {
+    try {
+      return computeAmounts(amountMinor, rules);
+    } catch (err) {
+      throw new UnprocessableEntityException((err as Error).message);
+    }
+  }
+
+  /** The command's active SPI calls (with active SPIs), in stage and sequence order. */
+  async spiCalls(commandId: string): Promise<SpiCall[]> {
+    const rows = await this.commandSpiRows(commandId);
+    return rows
+      .filter((r) => r.status === 'ACTIVE' && r.spi.status === 'ACTIVE')
+      .map((r) => ({
+        stage: r.triggerStage,
+        sequence: r.executionSequence,
+        spiCode: r.spi.code,
+        spiType: r.spi.spiType,
+        operation: r.spiOperation,
+        timeoutMs: r.spi.timeoutMs,
+        maxRetries: r.spi.maxRetries,
+      }));
+  }
+
+  // ------------------------------------------------------------------ helpers
+
+  private async tierDetails(tierId: string, db: Db = this.db) {
+    const [rules, movements] = await Promise.all([
+      db.select().from(tierAmountRule).where(eq(tierAmountRule.tierConfigId, tierId)).orderBy(asc(tierAmountRule.calcSequence)),
+      db.select().from(balanceMovementConfig).where(eq(balanceMovementConfig.tierConfigId, tierId)).orderBy(asc(balanceMovementConfig.movementSequence)),
+    ]);
+    return { rules, movements };
+  }
+
+  private async commandSpiRows(commandId: string) {
+    const rows = await this.db
+      .select({
+        id: serviceCommandSpi.id,
+        triggerStage: serviceCommandSpi.triggerStage,
+        executionSequence: serviceCommandSpi.executionSequence,
+        spiOperation: serviceCommandSpi.spiOperation,
+        status: serviceCommandSpi.status,
+        spi: {
+          code: spi.code,
+          name: spi.name,
+          spiType: spi.spiType,
+          status: spi.status,
+          timeoutMs: sql<number>`coalesce(${spiExternalConfig.timeoutMs}, ${spiInternalConfig.timeoutMs})`,
+          maxRetries: sql<number>`coalesce(${spiExternalConfig.maxRetries}, 0)`,
+        },
+      })
+      .from(serviceCommandSpi)
+      .innerJoin(spi, eq(spi.id, serviceCommandSpi.spiId))
+      .leftJoin(spiInternalConfig, eq(spiInternalConfig.spiId, spi.id))
+      .leftJoin(spiExternalConfig, eq(spiExternalConfig.spiId, spi.id))
+      .where(eq(serviceCommandSpi.serviceCommandId, commandId));
+    const stageOrder = ['PRE_PAYMENT', 'POST_PAYMENT', 'NOTIFICATION'];
+    return rows.sort((a, b) => stageOrder.indexOf(a.triggerStage) - stageOrder.indexOf(b.triggerStage) || a.executionSequence - b.executionSequence);
+  }
+
+  private toRule(r: CreateTierDto['rules'][number]): AmountRule {
+    return {
+      amountType: r.amountType,
+      calcSequence: r.calcSequence,
+      calcMethod: r.calcMethod,
+      baseAmountType: r.baseAmountType ?? null,
+      fixedValue: r.fixedValue ?? null,
+      percentage: r.percentage ?? null,
+      formulaExpression: r.formulaExpression ?? null,
+      minValue: r.minValue ?? null,
+      maxValue: r.maxValue ?? null,
+    };
+  }
+
+  /** Amounts worth pricing before a tier is saved: the range edges (max is exclusive) and a midpoint. */
+  private edges(min?: string, max?: string): bigint[] {
+    const lo = min ? toMinor(min) : 1n;
+    const hi = max ? toMinor(max) - 1n : lo * 1000n + 100_000n;
+    return [...new Set([lo > 0n ? lo : 1n, hi, (lo + hi) / 2n])].filter((a) => a > 0n);
   }
 
   private async findService(code: string) {
-    const [service] = await this.db.select().from(services).where(eq(services.serviceCode, code));
-    if (!service) throw new NotFoundException(`service ${code} not found`);
-    return service;
+    const [row] = await this.db.select().from(service).where(eq(service.code, code));
+    if (!row) throw new NotFoundException(`service ${code} not found`);
+    return row;
   }
 
-  private async findCommand(code: string, command: Command, serviceId?: string) {
+  private async findCommand(code: string, type: CommandType, serviceId?: string) {
     const id = serviceId ?? (await this.findService(code)).id;
-    const [cmd] = await this.db
+    const [row] = await this.db
       .select()
-      .from(serviceCommands)
-      .where(and(eq(serviceCommands.serviceId, id), eq(serviceCommands.command, command)));
-    if (!cmd) throw new NotFoundException(`command ${command} not configured for ${code}`);
-    return cmd;
+      .from(serviceCommand)
+      .where(and(eq(serviceCommand.serviceId, id), eq(serviceCommand.commandType, type)));
+    if (!row) throw new NotFoundException(`${type} is not configured for ${code}`);
+    return row;
   }
 }

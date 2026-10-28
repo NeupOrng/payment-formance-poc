@@ -1,19 +1,20 @@
-const SYMBOLS: Record<Currency, string> = { USD: '$', KHR: '៛' }
+const SYMBOLS: Record<string, string> = { USD: '$', KHR: '៛' }
 
-/** Formats an amount in the smallest unit (string of digits, 2 decimals) without floating point. */
-export function formatMoney(minor: string | number | bigint, currency: Currency) {
-  const value = BigInt(minor)
-  const negative = value < 0n
-  const abs = negative ? -value : value
-  const whole = (abs / 100n).toLocaleString('en-US')
-  const cents = (abs % 100n).toString().padStart(2, '0')
-  return `${negative ? '-' : ''}${SYMBOLS[currency]}${whole}.${cents}`
+/** Formats a decimal string ("1234.5") as money without floating point: $1,234.50. */
+export function formatMoney(value: string | null | undefined, currency: string) {
+  if (value === null || value === undefined) return '—'
+  const negative = value.startsWith('-')
+  const [whole = '0', frac = ''] = value.replace('-', '').split('.')
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `${negative ? '−' : ''}${SYMBOLS[currency] ?? ''}${grouped}.${frac.padEnd(2, '0').slice(0, 2)}`
 }
 
-/** The customer's net effect on a transfer: as payer (source) or payee (destination). */
-export function netFor(transfer: Transfer, customerId: string): bigint {
-  const net = transfer.sourceCustomerId === customerId ? transfer.sourceNet : transfer.destinationNet
-  return BigInt(net ?? 0)
+export function isPositive(value: string | null | undefined) {
+  return !!value && !value.startsWith('-') && /[1-9]/.test(value)
+}
+
+export function isNegative(value: string | null | undefined) {
+  return !!value && value.startsWith('-') && /[1-9]/.test(value)
 }
 
 let dateTime: Intl.DateTimeFormat | undefined
@@ -31,28 +32,18 @@ export function shortId(id: string) {
   return id.slice(0, 8)
 }
 
-export const AMOUNT_TYPE_LABELS: Record<AmountType, string> = {
-  amount: 'Amount',
-  selling_price: 'Selling price',
-  fee_from_customer: 'Fee from customer',
-  fee_from_partner: 'Fee from partner',
-  commission_to_agent_1: 'Commission to agent 1',
-  commission_to_partner: 'Commission to partner',
-  withholding_tax: 'Withholding tax',
-  discount: 'Discount',
-  cash_back: 'Cash back',
-  cancellation_fee: 'Cancellation fee',
-  commission_to_agent_2: 'Commission to agent 2',
-  purchasing_cost: 'Purchasing cost',
-  vat: 'VAT',
-  platform_commission: 'Platform commission',
-  net_amount: 'Net amount',
-  service_charge: 'Service charge',
+const ACRONYMS = new Set(['vat', 'kyc', 'spi', 'usd', 'khr', 'qr', 'p2p'])
+
+/** AMOUNT_TYPE_CODE → "Amount type code" (acronyms stay upper case: VAT, KYC, …). */
+export function humanize(code: string) {
+  const words = code.toLowerCase().split('_').map(w => (ACRONYMS.has(w) ? w.toUpperCase() : w))
+  const s = words.join(' ')
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-export const TYPE_LABELS: Record<TransferType, string> = {
-  payment: 'Payment',
-  refund: 'Refund',
-  cancel: 'Cancel',
-  topup: 'Top-up',
+export const PRODUCT_LABELS: Record<ProductType, string> = {
+  CURRENT: 'Current account',
+  AGENT_FLOAT: 'Agent float',
+  COMMISSION: 'Commission',
+  INTERNAL: 'Internal',
 }

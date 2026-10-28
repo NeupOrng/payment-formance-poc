@@ -1,0 +1,21 @@
+meta {
+  name: Hold while waiting (live from Formance)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{paymentUrl}}/stocks/{{payerStock}}/ledger-balance
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("hold 21.00, available 79.00", function () {
+    expect(res.body.holdAmount).to.equal("21.00"); expect(res.body.availableBalance).to.equal("79.00");
+  });
+}

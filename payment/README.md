@@ -1,74 +1,46 @@
-# Payment service
+# Payment Engine
 
-NestJS + Drizzle ORM (Postgres) + Formance Ledger. Owns the service catalog (services → commands → pricing tiers and balance movements), transfers, and the only connection to Formance. The full model is in [docs/05-schema.md](../docs/05-schema.md).
+NestJS + Drizzle ORM (Postgres) + Temporal + Formance Ledger. Holds the service configuration and runs every payment order as a saga. Model: [docs/05-schema.md](../docs/05-schema.md).
+
+## Configuration API
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /services`, `GET /services`, `GET /services/:code`, `PATCH /services/:code` | Service catalog; `GET /services/:code` includes each command's tiers and movement |
-| `PUT /services/:code/commands/:command` | Command settings: status, refund/cancel window, partial refunds, net-amount formula |
-| `POST /services/:code/commands/:command/pricing-tiers` | Add a pricing tier for one amount type and band; the response includes the movement's balance check |
-| `PATCH /pricing-tiers/:id` | Retire a tier (`effectiveTo`); tiers are never edited in place |
-| `POST /services/:code/commands/:command/movement/check` | Dry run: does this debit/credit list balance with the current tiers? |
-| `PUT /services/:code/commands/:command/movement` | Save the debit/credit entries; **400 with the failing amounts if they don't balance** |
-| `POST /payments` | **Perform a payment**: `{ serviceCode, amount, currency, source, destination? }`. Needs `Idempotency-Key` |
-| `POST /payments/:id/refund` | Refund a payment: `{ amount? }` (default: everything not yet refunded) |
-| `POST /payments/:id/cancel` | Cancel a payment (full amount, within the cancel window) |
-| `POST /services/:code/:command` | Generic form: run any command, `{ currency, amount, source, destination? }` or `{ currency, originalTransferId, amount? }` |
-| `POST /topups` | System flow: money from the partner bank (`@world`) into a customer account |
-| `GET /transfers?customerId=&currency=&type=&status=&limit=&offset=` | History where the customer is payer or payee, newest first |
-| `GET /transfers/:id` | One transfer with its calculated amount types and status events |
-| `GET /transfers/:id/ledger` | The Formance postings behind it, each with its debit and credit amount type |
-| `GET /customers/:id/balances`, `GET /services/:code/balances` | Live balances from Formance (service: every account its movements use) |
+| `GET/POST /amount-types` | Amount types (data, e.g. `FEE_FROM_CUSTOMER`) |
+| `GET/POST /service-groups`, `PATCH /service-groups/:id` | Groups; `INACTIVE` turns off its services |
+| `GET/POST /services`, `GET/PATCH /services/:code` | Services (one currency each); `GET` returns the whole configuration |
+| `PUT /services/:code/commands/:commandType` | Enable `PAYMENT`, `REFUND` or `CANCEL` |
+| `POST /services/:code/commands/:commandType/tiers` | A tier: range `[min, max)`, amount rules, balance movements, validated before saving |
+| `GET /tiers/:id`, `PATCH /tiers/:id`, `POST /tiers/:id/preview` | Read; deactivate (tiers are immutable); dry-run an amount |
+| `GET/POST /spis`, `PATCH /spis/:code` | Providers (internal handler or external REST) |
+| `POST /services/:code/commands/:commandType/spis`, `PATCH /command-spis/:id` | Attach an SPI at `PRE_PAYMENT`, `POST_PAYMENT` or `NOTIFICATION` |
 
-Swagger: http://localhost:4002/docs
+## Payment API
 
-## Configuring a command
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /payments` | `{ serviceCode, amount, payerStockId, payeeStockId, externalReference? }`; needs `Idempotency-Key`. Returns the order `PENDING` (money held, awaiting authorization), or final if it needs none / failed early |
+| `POST /payments/:id/authorize` | Customer authentication → the saga processes the order |
+| `POST /payments/:id/cancel` | `PENDING`: cancel (hold released). `COMPLETED`: a `CANCEL` order |
+| `POST /payments/:id/refund` | A `REFUND` order, `{ amount? }` (default: the rest) |
+| `GET /payments?stockId=&customerId=&status=&commandType=` | Orders, newest first; with `stockId`, each with `netForStock` |
+| `GET /payments/:id` | Order with amounts, movements, ledger transactions, status history, workflow id |
+| `GET /payments/:id/ledger` | The Formance transactions (RESERVE, SETTLE, REVERT, RELEASE) with postings |
+| `GET /stocks/:id/ledger-balance` | A stock's balance straight from Formance |
 
-Configure the three steps in this order (see `scripts/seed.ts`):
+Write calls answer **201** when the saga reached the expected point and **202** if it is still running (poll `GET /payments/:id`). Swagger: http://localhost:4002/docs · sagas: http://localhost:8233
 
-1. **Settings:** `PUT …/commands/payment` with `{}`. Refund and cancel can also set `maxAgeMinutes`, `allowPartial` and the `netAmountAdd` / `netAmountSubtract` lists.
-2. **Pricing tiers.** For example, for amounts up to $40.00:
-   ```json
-   { "amountType": "selling_price", "currency": "USD", "minAmount": "1", "maxAmount": "4000",
-     "calcType": "percent", "percentBps": 500, "includeBase": true }
-   { "amountType": "fee_from_customer", "currency": "USD", "minAmount": "1", "maxAmount": "4000",
-     "calcType": "percent", "percentBps": 500 }
-   ```
-3. **Balance movement:**
-   ```json
-   { "entries": [
-     { "entryNo": 1, "side": "debit",  "account": "{source}",                "amountType": "selling_price" },
-     { "entryNo": 2, "side": "credit", "account": "{destination}",           "amountType": "amount" },
-     { "entryNo": 3, "side": "credit", "account": "platform:fees:{service}", "amountType": "fee_from_customer" }
-   ] }
-   ```
+## Code map
 
-## How a command runs
-
-1. Return the existing transfer if the `Idempotency-Key` was used before.
-2. Load the service, the command and its movement, and make sure the service and command are active.
-3. Look up the customer accounts:
-   - **Payment:** the source account, plus the destination if the movement uses `{destination}`.
-   - **Refund or cancel:** the original payment's source and destination.
-4. **Refund or cancel only:** lock the original payment and check the time window, the partial-refund rule, and that the total reversed stays within the original amount.
-5. Check the amount is inside the command's configured range. Then calculate every amount type from the tiers (`src/pricing/pricing.ts`, `bigint` only).
-6. Check that Σ debits = Σ credits, pair debits with credits into postings, and write one Numscript `send` per posting (`src/movement/movement.ts`).
-7. In one database transaction, insert the transfer, its amounts, its first event and an outbox row (the request plus the planned postings).
-8. Post to Formance with `reference` and `Idempotency-Key` set to the transfer id:
-   - **Accepted:** the transfer becomes `posted`.
-   - **400** (e.g. `INSUFFICIENT_FUND`): the transfer becomes `failed`.
-   - **Ledger unreachable:** the transfer stays `pending` and `OutboxWorker` retries it.
-
-Ledger accounts:
-- Customers: `users:{customerId}:{usd|khr}`.
-- Specific accounts: whatever path the movement names, with `{service}` replaced and the currency appended (e.g. `platform:fees:merchant_qr:usd`).
-- Outside money: `@world`.
-
-## Develop
+| Path | What |
+| --- | --- |
+| `src/pricing/` | Exact formula evaluator and amount rules (`computeAmounts`, `validateRules`) |
+| `src/movement/` | Movement resolution and the saga's ledger plan (`resolveMovements`, `planLedger`, `toNumscript`) |
+| `src/catalog/` | Configuration API and tier validation |
+| `src/orders/` | `prepare` (validate, price, plan, record), ledger steps and transitions, SPI runner, API |
+| `src/temporal/` | `orderSaga` workflow, activities, worker, `SagaService` (start / signal / wait) |
 
 ```bash
-npm test                                         # vitest: pricing + movement (balance check, postings, Numscript)
-PAYMENT_URL=http://localhost:4002 npm run seed   # example services (also: task seed)
+npm test                                                                   # vitest
+PROFILE_URL=http://localhost:4001 PAYMENT_URL=http://localhost:4002 npm run seed   # also: task seed
 ```
-
-Schema is in `src/db/schema.ts`. After editing it, run `task db:generate -- payment`. `drizzle/0001_pricing_tier_no_overlap.sql` is hand-written (btree_gist exclusion constraint).

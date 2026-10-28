@@ -1,0 +1,25 @@
+meta {
+  name: Get order
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{paymentUrl}}/payments/{{orderId}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("movements POSTED", function () {
+    expect(res.body.movements.every((m) => m.status === "POSTED")).to.equal(true);
+  });
+
+  test("has a workflow id", function () {
+    expect(res.body.workflowId).to.match(/^order-/);
+  });
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Add bank Fee income account
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{profileUrl}}/profiles/{{bankId}}/accounts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "productType": "INTERNAL",
+    "name": "Fee income",
+    "currencies": [
+      "USD"
+    ]
+  }
+}
+
+script:post-response {
+  bru.setVar("feeStock", res.body.accounts.find((a) => a.name === "Fee income").stocks[0].id);
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+}

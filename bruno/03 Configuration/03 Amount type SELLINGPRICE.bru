@@ -1,0 +1,24 @@
+meta {
+  name: Amount type SELLING_PRICE
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{paymentUrl}}/amount-types
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "SELLING_PRICE",
+    "name": "Selling price"
+  }
+}
+
+tests {
+  test("status is 201 or 409", function () {
+    expect([201, 409]).to.include(res.status);
+  });
+}

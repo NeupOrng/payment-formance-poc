@@ -21,8 +21,8 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const doc = new DocumentBuilder()
-    .setTitle('Payment service')
-    .setDescription('Services, fee tiers, transfers and the Formance Ledger integration')
+    .setTitle('Payment engine')
+    .setDescription('Service configuration (groups, services, commands, tiers, SPIs) and payment orders run as Temporal sagas on Formance Ledger')
     .build();
   SwaggerModule.setup('docs', app, () => SwaggerModule.createDocument(app, doc));
 

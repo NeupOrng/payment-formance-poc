@@ -1,0 +1,43 @@
+meta {
+  name: Rule using a later amount type is rejected
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/PAYMENT/tiers
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "minAmount": "100.00",
+    "rules": [
+      {
+        "amountType": "SELLING_PRICE",
+        "calcSequence": 1,
+        "calcMethod": "FORMULA",
+        "formulaExpression": "AMOUNT + FEE_FROM_CUSTOMER"
+      }
+    ],
+    "movements": [
+      {
+        "movementSequence": 1,
+        "amountType": "AMOUNT",
+        "fromStockRole": "PAYER",
+        "toStockRole": "PAYEE"
+      }
+    ]
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+
+  test("explains", function () {
+    expect(JSON.stringify(res.body)).to.contain("not AMOUNT or calculated earlier");
+  });
+}

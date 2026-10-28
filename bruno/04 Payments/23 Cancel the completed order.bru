@@ -1,0 +1,25 @@
+meta {
+  name: Cancel the completed order
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{paymentUrl}}/payments/{{secondId}}/cancel
+  body: none
+  auth: none
+}
+
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+tests {
+  test("status is 201", function () {
+    expect(res.status).to.equal(201);
+  });
+
+  test("CANCEL order COMPLETED", function () {
+    expect(res.body.commandType).to.equal("CANCEL"); expect(res.body.status).to.equal("COMPLETED");
+  });
+}

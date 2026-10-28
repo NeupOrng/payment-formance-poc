@@ -1,0 +1,21 @@
+meta {
+  name: Payer balance (Formance)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{paymentUrl}}/stocks/{{payerStock}}/ledger-balance
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+
+  test("100 − 21 + 5 + 15 − 10.50 + 10 = 98.50", function () {
+    expect(res.body.ledgerBalance).to.equal("98.50"); expect(res.body.holdAmount).to.equal("0.00");
+  });
+}

@@ -1,148 +1,73 @@
-import { AMOUNT_TYPES } from '../db/schema.js';
-import type { AmountValues, PricingRule } from '../pricing/pricing.js';
-import {
-  accountAddress,
-  amountRange,
-  checkBalance,
-  planPostings,
-  sampleAmounts,
-  toNumscript,
-  type MovementEntry,
-} from './movement.js';
+import { holdAccount, planLedger, resolveMovements, toNumscript, type MovementConfig, type StockInfo } from './movement.js';
 
-const values = (o: Partial<AmountValues>): AmountValues => ({
-  ...(Object.fromEntries(AMOUNT_TYPES.map((t) => [t, 0n])) as AmountValues),
-  ...o,
-});
-const entry = (entryNo: number, side: MovementEntry['side'], account: string, amountType: MovementEntry['amountType'], allowOverdraft = false): MovementEntry => ({
-  entryNo,
-  side,
-  account,
-  amountType,
-  allowOverdraft,
-});
-const tier = (o: Partial<PricingRule> & { minAmount?: bigint; maxAmount?: bigint | null }) => ({
-  amountType: 'fee_from_customer' as const,
-  calcType: 'percent' as const,
-  baseAmountType: 'amount' as const,
-  includeBase: false,
-  fixedAmount: 0n,
-  percentBps: 0,
-  minValue: null,
-  maxValue: null,
-  minAmount: 1n,
-  maxAmount: null,
-  ...o,
-});
-const noNet = { netAmountAdd: [], netAmountSubtract: [] };
-const resolve = (account: string) => ({ '{source}': 'users:a:usd', '{destination}': 'users:b:usd' })[account] ?? accountAddress(account, 'shop', 'USD');
+const payer = 'stock-payer';
+const payee = 'stock-payee';
+const fees = 'stock-fees';
+const stocks = new Map<string, StockInfo>([
+  [payer, { id: payer, stockNumber: '000000000001', ledgerAccount: 'individual:cif1:current:000000000001', productType: 'CURRENT' }],
+  [payee, { id: payee, stockNumber: '000000000002', ledgerAccount: 'individual:cif2:current:000000000002', productType: 'CURRENT' }],
+  [fees, { id: fees, stockNumber: '000000000003', ledgerAccount: 'internal:cif3:internal:000000000003', productType: 'INTERNAL' }],
+]);
 
-// The example from the spec: ≤ $40, selling price = amount + 5%, fee from customer = 5%.
-const exampleEntries = [
-  entry(1, 'debit', '{source}', 'selling_price'),
-  entry(2, 'credit', '{destination}', 'amount'),
-  entry(3, 'credit', 'platform:fees:{service}', 'fee_from_customer'),
+// The spec example: payer → payee AMOUNT, payer → fee account FEE_FROM_CUSTOMER
+const config: MovementConfig[] = [
+  { movementSequence: 2, amountType: 'FEE_FROM_CUSTOMER', fromStockRole: 'PAYER', fromStockId: null, toStockRole: 'SPECIFIC', toStockId: fees },
+  { movementSequence: 1, amountType: 'AMOUNT', fromStockRole: 'PAYER', fromStockId: null, toStockRole: 'PAYEE', toStockId: null },
 ];
-const exampleTiers = [
-  tier({ amountType: 'selling_price', percentBps: 500, includeBase: true, maxAmount: 4_000n }),
-  tier({ amountType: 'fee_from_customer', percentBps: 500, maxAmount: 4_000n }),
-];
+const amounts = new Map([['AMOUNT', 2_000n], ['FEE_FROM_CUSTOMER', 100n]]);
 
-describe('checkBalance', () => {
-  it('accepts a movement whose debits equal its credits for every band', () => {
-    expect(checkBalance(exampleEntries, exampleTiers, noNet, 4_000n)).toEqual([]);
-  });
-
-  it('reports the amounts where debits and credits differ', () => {
-    const missingFee = exampleEntries.slice(0, 2);
-    const problems = checkBalance(missingFee, exampleTiers, noNet, 4_000n);
-    expect(problems.length).toBeGreaterThan(0);
-    expect(problems.find((p) => p.amount === '1000')).toEqual({ amount: '1000', debit: '1050', credit: '1000' });
-  });
-
-  it('only checks amounts inside the configured bands (≤ $40 here)', () => {
-    expect(checkBalance(exampleEntries, exampleTiers, noNet, 10_000n)).toEqual([]);
-  });
-
-  it('flags a gap between bands where a priced type is missing', () => {
-    const withGap = [
-      ...exampleTiers,
-      tier({ amountType: 'selling_price', percentBps: 500, includeBase: true, minAmount: 6_000n, maxAmount: 8_000n }),
-    ];
-    // 4,001 – 5,999 is inside the range but has no selling price → debit 0 vs credit = amount.
-    expect(checkBalance(exampleEntries, withGap, noNet, 10_000n).some((p) => p.amount === '4001')).toBe(true);
-  });
-});
-
-describe('sampleAmounts', () => {
-  it('includes band edges and stays within the configured range', () => {
-    const points = sampleAmounts([{ minAmount: 1n, maxAmount: 4_000n }], 10_000n);
-    expect(points).toEqual(expect.arrayContaining([1n, 4_000n, 2_000n]));
-    expect(points.every((p) => p <= 4_000n)).toBe(true);
-  });
-
-  it('covers the whole range when there are no tiers', () => {
-    expect(sampleAmounts([], 10_000n).at(-1)).toBe(10_000n);
-  });
-});
-
-describe('amountRange', () => {
-  it('spans the lowest to the highest band, open-ended if any band is', () => {
-    expect(amountRange([{ minAmount: 1_000n, maxAmount: 2_000n }, { minAmount: 1n, maxAmount: 500n }])).toEqual({ min: 1n, max: 2_000n });
-    expect(amountRange([{ minAmount: 1n, maxAmount: 500n }, { minAmount: 501n, maxAmount: null }])).toEqual({ min: 1n, max: null });
-    expect(amountRange([])).toBeNull();
-  });
-});
-
-describe('planPostings', () => {
-  it('pairs debits with credits into postings, keeping both amount types', () => {
-    const { postings, effects } = planPostings(
-      exampleEntries,
-      values({ selling_price: 1_050n, amount: 1_000n, fee_from_customer: 50n }),
-      resolve,
-    );
-    expect(postings).toEqual([
-      { source: 'users:a:usd', destination: 'users:b:usd', amount: '1000', debitType: 'selling_price', creditType: 'amount', overdraft: false },
-      { source: 'users:a:usd', destination: 'platform:fees:shop:usd', amount: '50', debitType: 'selling_price', creditType: 'fee_from_customer', overdraft: false },
-    ]);
-    expect(effects.get('{source}')).toBe(-1_050n);
-    expect(effects.get('{destination}')).toBe(1_000n);
-  });
-
-  it('chains through an intermediate account in entry order', () => {
-    const { postings } = planPostings(
-      [
-        entry(1, 'debit', '{source}', 'amount'),
-        entry(2, 'credit', 'services:{service}', 'amount'),
-        entry(3, 'debit', 'services:{service}', 'platform_commission'),
-        entry(4, 'credit', 'platform:revenue:{service}', 'platform_commission'),
-      ],
-      values({ amount: 10_000n, platform_commission: 100n }),
-      resolve,
-    );
-    expect(postings.map((p) => [p.source, p.destination, p.amount])).toEqual([
-      ['users:a:usd', 'services:shop:usd', '10000'],
-      ['services:shop:usd', 'platform:revenue:shop:usd', '100'],
+describe('resolveMovements', () => {
+  it('maps roles to the order stocks, in sequence order', () => {
+    expect(resolveMovements(config, amounts, { payer, payee })).toEqual([
+      { movementSequence: 1, amountType: 'AMOUNT', amount: 2_000n, fromStockId: payer, toStockId: payee },
+      { movementSequence: 2, amountType: 'FEE_FROM_CUSTOMER', amount: 100n, fromStockId: payer, toStockId: fees },
     ]);
   });
 
-  it('skips zero values and refuses an unbalanced movement', () => {
-    expect(() => planPostings(exampleEntries, values({ selling_price: 1_050n, amount: 1_000n }), resolve)).toThrow(/not balanced/);
+  it('skips amount types that came out 0 or have no rule', () => {
+    expect(resolveMovements(config, new Map([['AMOUNT', 500n]]), { payer, payee })).toHaveLength(1);
+  });
+
+  it('refuses a movement from a stock to itself', () => {
+    expect(() => resolveMovements(config, amounts, { payer, payee: payer })).toThrow(/to itself/);
+  });
+});
+
+describe('planLedger', () => {
+  const movements = resolveMovements(config, amounts, { payer, payee });
+
+  it('reserves what the payer pays, settles from the hold, and plans release and revert', () => {
+    const plan = planLedger(movements, stocks, new Set([payer, payee]), 'order-1', 'USD/2');
+    expect(plan.map((t) => t.step)).toEqual(['RESERVE', 'RELEASE', 'SETTLE', 'REVERT']);
+    const [reserve, release, settle, revert] = plan;
+    const hold = holdAccount('000000000001', 'order-1');
+
+    expect(reserve.postings).toMatchObject([{ source: 'individual:cif1:current:000000000001', destination: hold, amount: '21.00' }]);
+    expect(release.postings).toMatchObject([{ source: hold, destination: 'individual:cif1:current:000000000001', amount: '21.00' }]);
+    expect(settle.postings.map((p) => [p.source, p.destination, p.amount, p.amountType])).toEqual([
+      [hold, 'individual:cif2:current:000000000002', '20.00', 'AMOUNT'],
+      [hold, 'internal:cif3:internal:000000000003', '1.00', 'FEE_FROM_CUSTOMER'],
+    ]);
+    expect(revert.numscript).toBeNull();
+    expect(revert.postings[0]).toMatchObject({ source: 'internal:cif3:internal:000000000003', destination: hold });
+  });
+
+  it('lets INTERNAL bank stocks go negative but never holds them', () => {
+    const cashIn = resolveMovements(
+      [{ movementSequence: 1, amountType: 'AMOUNT', fromStockRole: 'PAYER', fromStockId: null, toStockRole: 'PAYEE', toStockId: null }],
+      new Map([['AMOUNT', 5_000n]]),
+      { payer: fees, payee },
+    );
+    const plan = planLedger(cashIn, stocks, new Set([payee]), 'order-2', 'USD/2');
+    expect(plan.map((t) => t.step)).toEqual(['SETTLE', 'REVERT']);
+    expect(plan[0].numscript).toContain('source = @internal:cif3:internal:000000000003 allowing unbounded overdraft');
   });
 });
 
 describe('toNumscript', () => {
-  it('writes one send per posting, with overdraft only where allowed', () => {
-    const plain = toNumscript(
-      [
-        { source: 'users:a:usd', destination: 'users:b:usd', amount: '1000', debitType: 'amount', creditType: 'amount', overdraft: false },
-        { source: 'platform:marketing:usd', destination: 'users:a:usd', amount: '20', debitType: 'cash_back', creditType: 'cash_back', overdraft: true },
-      ],
-      'USD/2',
-    );
-    expect(plain).toBe(
-      'send [USD/2 1000] (\n  source = @users:a:usd\n  destination = @users:b:usd\n)\n' +
-        'send [USD/2 20] (\n  source = @platform:marketing:usd allowing unbounded overdraft\n  destination = @users:a:usd\n)\n',
+  it('writes one send per posting in minor units', () => {
+    expect(toNumscript([{ source: 'a', destination: 'b', amount: '21.50', fromStockId: null, toStockId: null, amountType: null, movementSequence: null }], 'KHR/2')).toBe(
+      'send [KHR/2 2150] (\n  source = @a\n  destination = @b\n)\n',
     );
   });
 });

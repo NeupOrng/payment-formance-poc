@@ -1,0 +1,21 @@
+meta {
+  name: CANCEL command
+  type: http
+  seq: 18
+}
+
+put {
+  url: {{paymentUrl}}/services/{{serviceCode}}/commands/CANCEL
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}

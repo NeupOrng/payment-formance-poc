@@ -1,0 +1,25 @@
+meta {
+  name: SPI without its config is rejected
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{paymentUrl}}/spis
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "BRUNO_BAD_SPI",
+    "name": "x",
+    "spiType": "EXTERNAL"
+  }
+}
+
+tests {
+  test("status is 400", function () {
+    expect(res.status).to.equal(400);
+  });
+}

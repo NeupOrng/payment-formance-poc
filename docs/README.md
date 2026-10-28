@@ -10,22 +10,26 @@ Source: the shared proposal doc (as of 2026-10-06), https://claude.ai/code/artif
 | [02-architecture.md](02-architecture.md) | Target architecture and component responsibilities |
 | [03-chart-of-accounts.md](03-chart-of-accounts.md) | Ledger account naming and rules |
 | [04-transaction-flows.md](04-transaction-flows.md) | Posting pattern, top-up, P2P, card, withdrawal, corrections (with Numscript) |
-| [05-schema.md](05-schema.md) | Postgres schema: customers, accounts, services, amount types, pricing tiers, balanced movements, transfers |
+| [05-schema.md](05-schema.md) | The implemented model: profiles and stocks, service configuration, payment orders, the Temporal saga |
 | [06-implementation-plan.md](06-implementation-plan.md) | Phases, success criteria, risks, open decisions |
 
 ## Current design decisions
 
-These are the newest decisions. Where an older section disagrees, these win.
+These are the newest decisions. Where an older doc disagrees, these win.
 
-- **Two accounts per customer:** each customer has exactly two accounts, one USD (`USD/2`) and one KHR (`KHR/2`). Their ledger addresses are `users:{customer_id}:usd` and `users:{customer_id}:khr`.
-- **Every customer transaction runs through a service:** each service has 2–3 commands (`payment`, `refund`, `cancel`). The request carries only amount, currency, source and destination.
-  - Each command prices 16 amount types (selling price, fees, commissions, VAT, …) with its own tiers.
-  - Each command moves money with a debit/credit movement that must balance before it can be saved.
-  - See [05-schema.md](05-schema.md#service-configuration).
-- **Cards are out of scope for now:** there are no card tables in the schema.
-- **No FX yet:** both sides of a transfer must be in the same currency.
+- **Schema:** follows the planned *Payment Engine & Profile Schema* (see [05-schema.md](05-schema.md)).
+  - **Profile Service:** profile → account_product → stock, one stock per currency.
+  - **Payment Engine:** service groups → services (one currency each) → commands → tiers, with amount rules and from → to balance movements, plus SPIs.
+- **Every payment order is a Temporal saga:** reserve → authorize → PRE_PAYMENT SPIs → settle → POST_PAYMENT SPIs → complete → notify. Failures are compensated with new ledger transactions (revert, release).
+- **Formance is the source of truth for money.** The stock balance columns mirror it from ledger events.
+- **Cards are out of scope for now.**
 
-## Known gaps to reconcile
+## Known gaps
 
-- [03-chart-of-accounts.md](03-chart-of-accounts.md) and [04-transaction-flows.md](04-transaction-flows.md) were written before the two-account and service model. They still use `users:{id}:main`, savings and hold accounts, and card flows.
-- The Numscript is a proposal that hasn't been run. Check it against the v3.2 Numscript reference before you build on it.
+- [02-architecture.md](02-architecture.md), [03-chart-of-accounts.md](03-chart-of-accounts.md) and [04-transaction-flows.md](04-transaction-flows.md) are from the original proposal (customer service, account paths, cards). [05-schema.md](05-schema.md) supersedes them.
+- Not built yet:
+  - Load testing.
+  - Reconciliation against partner statements.
+  - A real customer authentication factor (PIN / OTP).
+  - External SPI protocols other than REST.
+  - OAuth2 / mTLS for SPIs.

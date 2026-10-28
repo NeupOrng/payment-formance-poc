@@ -1,197 +1,253 @@
 /**
- * Seeds example services through the payment service API (so the same validation applies).
- * Each command is configured in order: settings → pricing tiers → balance movement (which the API
- * only accepts if debits equal credits). Safe to run more than once.
+ * Seeds an example configuration through the Profile Service and Payment Engine APIs, so the same
+ * validation applies as for an admin. Safe to run more than once: anything that exists is reused.
  *
- *   PAYMENT_URL=http://localhost:4002 npm run seed
+ *   PROFILE_URL=http://localhost:4001 PAYMENT_URL=http://localhost:4002 npm run seed
  *
- * Amounts are in the smallest unit: USD/2 cents, KHR/2 (៛1.00 = 100).
+ * Amounts are decimal strings in the service currency.
  */
-const BASE = process.env.PAYMENT_URL ?? 'http://localhost:4002';
+const PROFILE = process.env.PROFILE_URL ?? 'http://localhost:4001';
+const PAYMENT = process.env.PAYMENT_URL ?? 'http://localhost:4002';
 
-type Entry = { entryNo: number; side: 'debit' | 'credit'; account: string; amountType: string; allowOverdraft?: boolean };
-type Tier = Record<string, string | number | boolean>;
-type CommandConfig = { settings?: Record<string, unknown>; tiers: Tier[]; movement: Entry[] };
+type Json = Record<string, any>;
 
-/** Builds numbered entries: debit('{source}', 'selling_price'), credit('platform:fees:{service}', 'fee_from_customer'), … */
-function movement(...entries: [Entry['side'], string, string, boolean?][]): Entry[] {
-  return entries.map(([side, account, amountType, allowOverdraft], i) => ({
-    entryNo: i + 1,
-    side,
-    account,
-    amountType,
-    ...(allowOverdraft && { allowOverdraft }),
-  }));
-}
-/** The same rule for USD and KHR, with per-currency fixed amounts. */
-const both = (tier: Tier, fixed?: { USD: string; KHR: string }, min?: { USD: string; KHR: string }): Tier[] =>
-  (['USD', 'KHR'] as const).map((currency) => ({
-    minAmount: min?.[currency] ?? '1',
-    ...tier,
-    currency,
-    ...(fixed && { fixedAmount: fixed[currency] }),
-  }));
-/** A fee and the matching selling price (= amount + fee) for the same band. */
-const feeAndSellingPrice = (feeType: string, band: Tier): Tier[] => [
-  { ...band, amountType: feeType },
-  { ...band, amountType: 'selling_price', includeBase: true },
-];
-
-const PARTNER = 'services:{service}';
-const REVENUE = 'platform:revenue:{service}';
-
-const SERVICES: { code: string; name: string; commands: Record<string, CommandConfig> }[] = [
-  {
-    // Customer pays a bill: selling price = amount + fee. The biller pays the platform 1%;
-    // VAT is 10% of the customer fee; agent 1 earns a fixed commission.
-    code: 'EDC_BILL',
-    name: 'Electricity bill',
-    commands: {
-      payment: {
-        settings: { netAmountSubtract: ['platform_commission'] },
-        tiers: [
-          // ≤ $100.00 → $0.25; above → 0.25%, max $5.00
-          ...feeAndSellingPrice('fee_from_customer', { currency: 'USD', minAmount: '1', maxAmount: '10000', calcType: 'fixed', fixedAmount: '25' }),
-          ...feeAndSellingPrice('fee_from_customer', { currency: 'USD', minAmount: '10001', calcType: 'percent', percentBps: 25, maxValue: '500' }),
-          // ≤ ៛400,000 → ៛1,000; above → 0.25%, max ៛20,000
-          ...feeAndSellingPrice('fee_from_customer', { currency: 'KHR', minAmount: '1', maxAmount: '40000000', calcType: 'fixed', fixedAmount: '100000' }),
-          ...feeAndSellingPrice('fee_from_customer', { currency: 'KHR', minAmount: '40000001', calcType: 'percent', percentBps: 25, maxValue: '2000000' }),
-          ...both({ amountType: 'platform_commission', calcType: 'percent', percentBps: 100 }),
-          ...both({ amountType: 'vat', calcType: 'percent', percentBps: 1_000, baseAmountType: 'fee_from_customer' }),
-          ...both({ amountType: 'commission_to_agent_1', calcType: 'fixed' }, { USD: '10', KHR: '40000' }),
-        ],
-        movement: movement(
-          ['debit', '{source}', 'selling_price'],
-          ['credit', PARTNER, 'amount'],
-          ['credit', REVENUE, 'fee_from_customer'],
-          ['debit', PARTNER, 'platform_commission'],
-          ['credit', REVENUE, 'platform_commission'],
-          ['debit', REVENUE, 'vat', true],
-          ['credit', 'platform:tax:vat', 'vat'],
-          ['debit', REVENUE, 'commission_to_agent_1', true],
-          ['credit', 'agents:{service}:agent_1', 'commission_to_agent_1'],
-        ),
-      },
-      refund: {
-        settings: { allowPartial: true, maxAgeMinutes: 43_200 },
-        tiers: [],
-        movement: movement(['debit', PARTNER, 'amount'], ['credit', '{source}', 'amount']),
-      },
-      cancel: {
-        // Customer gets net amount = amount − cancellation fee: none below $10.00 / ៛40,000, then fixed.
-        settings: { maxAgeMinutes: 1_440, netAmountSubtract: ['cancellation_fee'] },
-        tiers: [
-          { amountType: 'cancellation_fee', currency: 'USD', minAmount: '1', maxAmount: '999', calcType: 'fixed', fixedAmount: '0' },
-          { amountType: 'cancellation_fee', currency: 'KHR', minAmount: '1', maxAmount: '3999999', calcType: 'fixed', fixedAmount: '0' },
-          ...both({ amountType: 'cancellation_fee', calcType: 'fixed' }, { USD: '50', KHR: '200000' }, { USD: '1000', KHR: '4000000' }),
-        ],
-        movement: movement(
-          ['debit', PARTNER, 'amount'],
-          ['credit', '{source}', 'net_amount'],
-          ['credit', REVENUE, 'cancellation_fee'],
-        ),
-      },
-    },
-  },
-  {
-    // Airtime top-up with 2% cash back funded by the platform's marketing budget.
-    code: 'MOBILE_TOPUP',
-    name: 'Mobile airtime top-up',
-    commands: {
-      payment: {
-        tiers: both({ amountType: 'cash_back', calcType: 'percent', percentBps: 200 }),
-        movement: movement(
-          ['debit', '{source}', 'amount'],
-          ['credit', PARTNER, 'amount'],
-          ['debit', 'platform:marketing', 'cash_back', true],
-          ['credit', '{source}', 'cash_back'],
-        ),
-      },
-      cancel: {
-        settings: { maxAgeMinutes: 30 },
-        tiers: both({ amountType: 'cash_back', calcType: 'percent', percentBps: 200 }),
-        movement: movement(
-          ['debit', PARTNER, 'amount'],
-          ['credit', '{source}', 'amount'],
-          ['debit', '{source}', 'cash_back'],
-          ['credit', 'platform:marketing', 'cash_back'],
-        ),
-      },
-    },
-  },
-  {
-    // The example from the spec, USD only: ≤ $40, selling price = amount + 5%, fee from customer = 5%.
-    // Debit the payer the selling price, credit the merchant the amount and the fee account the fee.
-    code: 'MERCHANT_QR',
-    name: 'Merchant QR payment',
-    commands: {
-      payment: {
-        tiers: [
-          { amountType: 'selling_price', currency: 'USD', minAmount: '1', maxAmount: '4000', calcType: 'percent', percentBps: 500, includeBase: true },
-          { amountType: 'fee_from_customer', currency: 'USD', minAmount: '1', maxAmount: '4000', calcType: 'percent', percentBps: 500 },
-        ],
-        movement: movement(
-          ['debit', '{source}', 'selling_price'],
-          ['credit', '{destination}', 'amount'],
-          ['credit', 'platform:fees:{service}', 'fee_from_customer'],
-        ),
-      },
-      refund: {
-        settings: { allowPartial: true, maxAgeMinutes: 10_080 },
-        tiers: [],
-        movement: movement(['debit', '{destination}', 'amount'], ['credit', '{source}', 'amount']),
-      },
-    },
-  },
-  {
-    // Customer-to-customer transfer: payer is debited the selling price (amount + service charge).
-    code: 'P2P_TRANSFER',
-    name: 'Send money',
-    commands: {
-      payment: {
-        tiers: [
-          ...both({ amountType: 'service_charge', calcType: 'fixed' }, { USD: '10', KHR: '40000' }),
-          ...both({ amountType: 'selling_price', calcType: 'fixed', includeBase: true }, { USD: '10', KHR: '40000' }),
-        ],
-        movement: movement(
-          ['debit', '{source}', 'selling_price'],
-          ['credit', '{destination}', 'amount'],
-          ['credit', 'platform:fees:{service}', 'service_charge'],
-        ),
-      },
-      refund: {
-        settings: { maxAgeMinutes: 60 },
-        tiers: [],
-        movement: movement(['debit', '{destination}', 'amount'], ['credit', '{source}', 'amount']),
-      },
-    },
-  },
-];
-
-async function call(method: string, path: string, body: unknown, okStatuses: number[] = []) {
-  const res = await fetch(BASE + path, {
+async function call(method: string, url: string, body?: unknown, ok: number[] = []): Promise<{ status: number; body: any }> {
+  const res = await fetch(url, {
     method,
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok && !okStatuses.includes(res.status)) {
-    throw new Error(`${method} ${path} → ${res.status} ${await res.text()}`);
-  }
-  return res.status;
+  const json = await res.json().catch(() => null);
+  if (!res.ok && !ok.includes(res.status)) throw new Error(`${method} ${url} → ${res.status} ${JSON.stringify(json)}`);
+  return { status: res.status, body: json };
 }
 
-for (const service of SERVICES) {
-  const created = await call('POST', '/services', { serviceCode: service.code, serviceName: service.name }, [409]);
-  console.log(`${service.code}: ${created === 409 ? 'exists' : 'created'}`);
+// ------------------------------------------------------------------------- profiles and stocks
 
-  for (const [command, config] of Object.entries(service.commands)) {
-    const path = `/services/${service.code}/commands/${command}`;
-    await call('PUT', path, config.settings ?? {});
-    let added = 0;
-    for (const tier of config.tiers) {
-      if ((await call('POST', `${path}/pricing-tiers`, tier, [409])) !== 409) added++;
+/** The bank's own profile and its INTERNAL accounts (one stock per currency). */
+const BANK_ACCOUNTS = ['Settlement', 'Fee income', 'VAT payable', 'Marketing', 'EDC payable', 'Telco payable'];
+
+async function profileNamed(type: string, fullName: string, extra: Json = {}) {
+  const list = (await call('GET', `${PROFILE}/profiles?type=${type}&limit=200`)).body as Json[];
+  const found = list.find((p) => p.fullName === fullName);
+  if (found) return (await call('GET', `${PROFILE}/profiles/${found.id}`)).body;
+  return (await call('POST', `${PROFILE}/profiles`, { profileType: type, fullName, ...extra })).body;
+}
+
+async function bank() {
+  let profile = await profileNamed('INTERNAL', 'Mobile Bank');
+  for (const name of BANK_ACCOUNTS) {
+    if (!profile.accounts.some((a: Json) => a.name === name)) {
+      profile = (await call('POST', `${PROFILE}/profiles/${profile.id}/accounts`, { productType: 'INTERNAL', name, currencies: ['USD', 'KHR'] })).body;
     }
-    await call('PUT', `${path}/movement`, { entries: config.movement });
-    console.log(`  ${command}: ${added} new pricing tiers, ${config.movement.length} movement entries (balanced)`);
   }
+  return profile;
+}
+
+const stockOf = (profile: Json, account: (a: Json) => boolean, currency: string): string =>
+  profile.accounts.find(account).stocks.find((s: Json) => s.currency === currency).id;
+
+// ------------------------------------------------------------------------- configuration
+
+const AMOUNT_TYPES: [string, string][] = [
+  ['AMOUNT', 'Amount'],
+  ['SELLING_PRICE', 'Selling price'],
+  ['FEE_FROM_CUSTOMER', 'Fee from customer'],
+  ['FEE_FROM_PARTNER', 'Fee from partner'],
+  ['COMMISSION_TO_AGENT_1', 'Commission to agent 1'],
+  ['COMMISSION_TO_PARTNER', 'Commission to partner'],
+  ['WITHHOLDING_TAX', 'Withholding tax'],
+  ['DISCOUNT', 'Discount'],
+  ['CASH_BACK', 'Cash back'],
+  ['CANCELLATION_FEE', 'Cancellation fee'],
+  ['COMMISSION_TO_AGENT_2', 'Commission to agent 2'],
+  ['PURCHASING_COST', 'Purchasing cost'],
+  ['VAT', 'VAT'],
+  ['PLATFORM_COMMISSION', 'Platform commission'],
+  ['NET_AMOUNT', 'Net amount'],
+  ['SERVICE_CHARGE', 'Service charge'],
+];
+
+const SPIS = [
+  {
+    code: 'EDC_BILLER',
+    name: 'EDC biller API (partner-mock)',
+    spiType: 'EXTERNAL',
+    external: { baseUrl: 'http://partner-mock:3000', protocol: 'REST', authType: 'NONE', timeoutMs: 2_500, maxRetries: 1 },
+  },
+  { code: 'SANCTIONS', name: 'Sanctions screening', spiType: 'INTERNAL', internal: { handlerName: 'sanctions-screening', timeoutMs: 2_000 } },
+  { code: 'PUSH', name: 'Push notification', spiType: 'INTERNAL', internal: { handlerName: 'push-notification', timeoutMs: 2_000 } },
+];
+
+// Rule and movement builders
+const fixed = (amountType: string, calcSequence: number, fixedValue: string, extra: Json = {}) => ({ amountType, calcSequence, calcMethod: 'FIXED', fixedValue, ...extra });
+const percent = (amountType: string, calcSequence: number, percentage: string, baseAmountType = 'AMOUNT', extra: Json = {}) => ({
+  amountType,
+  calcSequence,
+  calcMethod: 'FIXED',
+  baseAmountType,
+  percentage,
+  ...extra,
+});
+const formula = (amountType: string, calcSequence: number, formulaExpression: string) => ({ amountType, calcSequence, calcMethod: 'FORMULA', formulaExpression });
+type End = 'PAYER' | 'PAYEE' | string; // a role, or a stock id (SPECIFIC)
+const move = (movementSequence: number, amountType: string, from: End, to: End) => ({
+  movementSequence,
+  amountType,
+  ...(from === 'PAYER' || from === 'PAYEE' ? { fromStockRole: from } : { fromStockRole: 'SPECIFIC', fromStockId: from }),
+  ...(to === 'PAYER' || to === 'PAYEE' ? { toStockRole: to } : { toStockRole: 'SPECIFIC', toStockId: to }),
+});
+
+type Command = { tiers: Json[]; spis?: [string, string, number, string][] };
+type ServiceDef = { group: string; code: string; name: string; currency: string; commands: Record<string, Command> };
+
+function services(b: Json, agent: Json): ServiceDef[] {
+  const s = (name: string, ccy: string) => stockOf(b, (a) => a.name === name, ccy);
+  const agentCommission = (ccy: string) => stockOf(agent, (a) => a.productType === 'COMMISSION', ccy);
+  const backToPayer = { tiers: [{ rules: [], movements: [move(1, 'AMOUNT', 'PAYEE', 'PAYER')] }] };
+
+  const cashIn = (ccy: string): ServiceDef => ({
+    group: 'Cash-in',
+    code: `CASH_IN_${ccy}`,
+    name: `Cash-in from partner bank (${ccy})`,
+    currency: ccy,
+    commands: { PAYMENT: { tiers: [{ rules: [], movements: [move(1, 'AMOUNT', 'PAYER', 'PAYEE')] }] } },
+  });
+
+  const p2p = (ccy: string, charge: string): ServiceDef => ({
+    group: 'Transfers',
+    code: `P2P_${ccy}`,
+    name: `Send money (${ccy})`,
+    currency: ccy,
+    commands: {
+      PAYMENT: {
+        tiers: [
+          {
+            rules: [fixed('SERVICE_CHARGE', 1, charge), formula('SELLING_PRICE', 2, 'AMOUNT + SERVICE_CHARGE')],
+            movements: [move(1, 'AMOUNT', 'PAYER', 'PAYEE'), move(2, 'SERVICE_CHARGE', 'PAYER', s('Fee income', ccy))],
+          },
+        ],
+        spis: [['SANCTIONS', 'PRE_PAYMENT', 1, 'screen payer and payee'], ['PUSH', 'NOTIFICATION', 1, 'payment completed']],
+      },
+      REFUND: backToPayer,
+    },
+  });
+
+  // Bill payment: the payee is the bank's EDC payable account; the biller validates the bill before
+  // and confirms it after the money moves. The biller pays the bank 1%, VAT is 10% of the fee, and
+  // agent 1 earns a fixed commission out of fee income.
+  const billRules = (fee: Json) => [
+    fee,
+    formula('SELLING_PRICE', 2, 'AMOUNT + FEE_FROM_CUSTOMER'),
+    percent('PLATFORM_COMMISSION', 3, '1'),
+    percent('VAT', 4, '10', 'FEE_FROM_CUSTOMER'),
+    fixed('COMMISSION_TO_AGENT_1', 5, '0.10'),
+    formula('NET_AMOUNT', 6, 'AMOUNT - PLATFORM_COMMISSION'),
+  ];
+  const billMovements = [
+    move(1, 'AMOUNT', 'PAYER', 'PAYEE'),
+    move(2, 'FEE_FROM_CUSTOMER', 'PAYER', s('Fee income', 'USD')),
+    move(3, 'PLATFORM_COMMISSION', 'PAYEE', s('Fee income', 'USD')),
+    move(4, 'VAT', s('Fee income', 'USD'), s('VAT payable', 'USD')),
+    move(5, 'COMMISSION_TO_AGENT_1', s('Fee income', 'USD'), agentCommission('USD')),
+  ];
+  const cancelMovements = [move(1, 'NET_AMOUNT', 'PAYEE', 'PAYER'), move(2, 'CANCELLATION_FEE', 'PAYEE', s('Fee income', 'USD'))];
+
+  return [
+    cashIn('USD'),
+    cashIn('KHR'),
+    p2p('USD', '0.10'),
+    p2p('KHR', '400.00'),
+    {
+      group: 'Bill payments',
+      code: 'EDC_BILL_USD',
+      name: 'Electricity bill (USD)',
+      currency: 'USD',
+      commands: {
+        PAYMENT: {
+          tiers: [
+            // ≤ $100.00 → $0.25 fee; above → 0.25%, max $5.00
+            { minAmount: '0.01', maxAmount: '100.01', rules: billRules(fixed('FEE_FROM_CUSTOMER', 1, '0.25')), movements: billMovements },
+            { minAmount: '100.01', rules: billRules(percent('FEE_FROM_CUSTOMER', 1, '0.25', 'AMOUNT', { maxValue: '5.00' })), movements: billMovements },
+          ],
+          spis: [
+            ['EDC_BILLER', 'PRE_PAYMENT', 1, 'POST /validations'],
+            ['EDC_BILLER', 'POST_PAYMENT', 1, 'POST /confirmations'],
+            ['PUSH', 'NOTIFICATION', 1, 'bill paid'],
+          ],
+        },
+        REFUND: backToPayer,
+        CANCEL: {
+          tiers: [
+            // Free below $10.00, then $0.50: the customer gets NET_AMOUNT = AMOUNT − CANCELLATION_FEE.
+            { minAmount: '0.01', maxAmount: '10.00', rules: [fixed('CANCELLATION_FEE', 1, '0'), formula('NET_AMOUNT', 2, 'AMOUNT - CANCELLATION_FEE')], movements: cancelMovements },
+            { minAmount: '10.00', rules: [fixed('CANCELLATION_FEE', 1, '0.50'), formula('NET_AMOUNT', 2, 'AMOUNT - CANCELLATION_FEE')], movements: cancelMovements },
+          ],
+        },
+      },
+    },
+    {
+      // The spec example: ≤ $40, selling price = amount + 5%, fee from customer = 5%.
+      group: 'QR payments',
+      code: 'MERCHANT_QR_USD',
+      name: 'Merchant QR payment (USD)',
+      currency: 'USD',
+      commands: {
+        PAYMENT: {
+          tiers: [
+            {
+              minAmount: '0.01',
+              maxAmount: '40.01',
+              rules: [percent('FEE_FROM_CUSTOMER', 1, '5'), formula('SELLING_PRICE', 2, 'FEE_FROM_CUSTOMER + AMOUNT')],
+              movements: [move(1, 'AMOUNT', 'PAYER', 'PAYEE'), move(2, 'FEE_FROM_CUSTOMER', 'PAYER', s('Fee income', 'USD'))],
+            },
+          ],
+        },
+        REFUND: backToPayer,
+      },
+    },
+    {
+      // Airtime with 2% cash back funded by the bank's marketing budget.
+      group: 'Bill payments',
+      code: 'MOBILE_TOPUP_USD',
+      name: 'Mobile airtime top-up (USD)',
+      currency: 'USD',
+      commands: {
+        PAYMENT: {
+          tiers: [{ rules: [percent('CASH_BACK', 1, '2')], movements: [move(1, 'AMOUNT', 'PAYER', 'PAYEE'), move(2, 'CASH_BACK', s('Marketing', 'USD'), 'PAYER')] }],
+        },
+        CANCEL: {
+          tiers: [{ rules: [percent('CASH_BACK', 1, '2')], movements: [move(1, 'AMOUNT', 'PAYEE', 'PAYER'), move(2, 'CASH_BACK', 'PAYER', s('Marketing', 'USD'))] }],
+        },
+      },
+    },
+  ];
+}
+
+// ------------------------------------------------------------------------- run
+
+const b = await bank();
+const agent = await profileNamed('AGENT', 'Agent Sokha', { kycVerified: true, phoneNumber: '+85510900001' });
+console.log(`profiles: ${b.fullName} (${b.profileNumber}), ${agent.fullName} (${agent.profileNumber})`);
+
+for (const [code, name] of AMOUNT_TYPES) await call('POST', `${PAYMENT}/amount-types`, { code, name }, [409]);
+for (const spi of SPIS) await call('POST', `${PAYMENT}/spis`, spi, [409]);
+console.log(`amount types: ${AMOUNT_TYPES.length}, SPIs: ${SPIS.map((s) => s.code).join(', ')}`);
+
+const groups = new Map<string, string>(((await call('GET', `${PAYMENT}/service-groups`)).body as Json[]).map((g) => [g.name, g.id]));
+for (const def of services(b, agent)) {
+  if (!groups.has(def.group)) groups.set(def.group, (await call('POST', `${PAYMENT}/service-groups`, { name: def.group })).body.id);
+  const created = await call('POST', `${PAYMENT}/services`, { serviceGroupId: groups.get(def.group), code: def.code, name: def.name, currency: def.currency }, [409]);
+  if (created.status === 409) {
+    console.log(`${def.code}: exists`);
+    continue;
+  }
+  for (const [type, cmd] of Object.entries(def.commands)) {
+    await call('PUT', `${PAYMENT}/services/${def.code}/commands/${type}`, {});
+    for (const tier of cmd.tiers) await call('POST', `${PAYMENT}/services/${def.code}/commands/${type}/tiers`, tier);
+    for (const [spiCode, triggerStage, executionSequence, spiOperation] of cmd.spis ?? []) {
+      await call('POST', `${PAYMENT}/services/${def.code}/commands/${type}/spis`, { spiCode, triggerStage, executionSequence, spiOperation });
+    }
+  }
+  console.log(`${def.code}: ${Object.keys(def.commands).join(', ')}`);
 }

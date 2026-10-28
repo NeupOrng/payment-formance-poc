@@ -1,0 +1,17 @@
+meta {
+  name: List SPIs
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{paymentUrl}}/spis
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}
